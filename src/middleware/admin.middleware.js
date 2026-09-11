@@ -5,7 +5,12 @@ import { sendError } from "../utils/http.js";
 export async function verifySuperAdmin(req, res, next) {
   try {
     const secret = process.env.SUPERADMIN_TOKEN_SECRET || process.env.ACCESS_TOKEN_SECRET;
-    const token = req.cookies?.superAdminToken;
+    const authHeader = req.headers.authorization;
+    const token =
+      req.cookies?.superAdminToken ||
+      (authHeader && authHeader.startsWith("Bearer ")
+        ? authHeader.slice("Bearer ".length)
+        : null);
     if (!secret) {
       return sendError(res, 503, "Superadmin security is not configured.", "AUTH_UNAVAILABLE");
     }

@@ -186,8 +186,9 @@ async function createUser(req, res) {
     return res.status(201).json({
       success: true,
       message: "User account created successfully",
-      data: { user: sessionUser(user) },
+      data: { user: sessionUser(user), accessToken },
       user: sessionUser(user),
+      accessToken,
     });
   } catch (error) {
     logError("create_user", error);
@@ -315,8 +316,9 @@ async function loginUser(req, res) {
     return res.status(200).json({
       success: true,
       message: "Logged in successfully",
-      data: { user: sessionUser(user) },
+      data: { user: sessionUser(user), accessToken },
       user: sessionUser(user),
+      accessToken,
     });
   } catch (error) {
     logError("login", error);

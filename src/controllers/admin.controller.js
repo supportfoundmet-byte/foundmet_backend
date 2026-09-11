@@ -47,7 +47,12 @@ export async function adminLogin(req, res) {
     expiresIn: "8h",
   });
   res.cookie("superAdminToken", token, cookieOptions);
-  return res.json({ success: true, message: "Signed in", admin: { _id: admin._id, email: admin.email, name: admin.name, role } });
+  return res.json({
+    success: true,
+    message: "Signed in",
+    admin: { _id: admin._id, email: admin.email, name: admin.name, role },
+    accessToken: token,
+  });
 }
 
 export function adminLogout(req, res) {
