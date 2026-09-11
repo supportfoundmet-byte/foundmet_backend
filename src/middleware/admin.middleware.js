@@ -6,9 +6,16 @@ export async function verifySuperAdmin(req, res, next) {
   try {
     const secret = process.env.SUPERADMIN_TOKEN_SECRET || process.env.ACCESS_TOKEN_SECRET;
     const token = req.cookies?.superAdminToken;
-    if (!secret || !token) return sendError(res, 403, "Superadmin access required.", "FORBIDDEN");
+    if (!secret) {
+      return sendError(res, 503, "Superadmin security is not configured.", "AUTH_UNAVAILABLE");
+    }
+    if (!token) {
+      return sendError(res, 401, "Superadmin sign-in required.", "UNAUTHENTICATED");
+    }
     const payload = jwt.verify(token, secret);
-    if (!payload?._id) return sendError(res, 403, "Superadmin access required.", "FORBIDDEN");
+    if (!payload?._id) {
+      return sendError(res, 401, "Invalid admin session. Please sign in again.", "INVALID_SESSION");
+    }
     const admin = await AdminModel.findOne({
       _id: payload._id,
       isBlocked: { $ne: true },
@@ -17,7 +24,7 @@ export async function verifySuperAdmin(req, res, next) {
     req.admin = { ...admin, role: admin.role || "SUPER_ADMIN" };
     next();
   } catch {
-    return sendError(res, 403, "Invalid admin session.", "INVALID_SESSION");
+    return sendError(res, 401, "Invalid admin session. Please sign in again.", "INVALID_SESSION");
   }
 }
 
