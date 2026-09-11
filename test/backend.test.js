@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { isAllowedOrigin } from "../src/config/cors.config.js";
-import { verifyAuth } from "../src/middleware/auth.middleware.js";
-import { verifySuperAdmin } from "../src/middleware/admin.middleware.js";
+import { getAuthToken, verifyAuth } from "../src/middleware/auth.middleware.js";
+import { getAdminAuthToken, verifySuperAdmin } from "../src/middleware/admin.middleware.js";
 import { httpError, sendError, sendSuccess } from "../src/utils/http.js";
 import { isStrongPassword, sanitizeText } from "../src/utils/sanitize.js";
 
@@ -70,6 +70,26 @@ test("rejects invalid bearer tokens without querying the database", () => {
 
   if (previousSecret === undefined) delete process.env.ACCESS_TOKEN_SECRET;
   else process.env.ACCESS_TOKEN_SECRET = previousSecret;
+});
+
+test("prefers a fresh bearer token over a stale user cookie", () => {
+  assert.equal(
+    getAuthToken({
+      headers: { authorization: "Bearer fresh-token" },
+      cookies: { accessToken: "stale-token" },
+    }),
+    "fresh-token",
+  );
+});
+
+test("prefers a fresh bearer token over a stale admin cookie", () => {
+  assert.equal(
+    getAdminAuthToken({
+      headers: { authorization: "Bearer fresh-admin-token" },
+      cookies: { superAdminToken: "stale-admin-token" },
+    }),
+    "fresh-admin-token",
+  );
 });
 
 test("rejects invalid admin bearer tokens without querying the database", () => {

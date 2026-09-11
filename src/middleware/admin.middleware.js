@@ -2,15 +2,21 @@ import jwt from "jsonwebtoken";
 import AdminModel from "../models/admin.model.js";
 import { sendError } from "../utils/http.js";
 
+export function getAdminAuthToken(req) {
+  const authHeader = req.headers.authorization;
+  return (
+    (authHeader && authHeader.startsWith("Bearer ")
+      ? authHeader.slice("Bearer ".length).trim()
+      : null) ||
+    req.cookies?.superAdminToken ||
+    null
+  );
+}
+
 export async function verifySuperAdmin(req, res, next) {
   try {
     const secret = process.env.SUPERADMIN_TOKEN_SECRET || process.env.ACCESS_TOKEN_SECRET;
-    const authHeader = req.headers.authorization;
-    const token =
-      req.cookies?.superAdminToken ||
-      (authHeader && authHeader.startsWith("Bearer ")
-        ? authHeader.slice("Bearer ".length)
-        : null);
+    const token = getAdminAuthToken(req);
     if (!secret) {
       return sendError(res, 503, "Superadmin security is not configured.", "AUTH_UNAVAILABLE");
     }
