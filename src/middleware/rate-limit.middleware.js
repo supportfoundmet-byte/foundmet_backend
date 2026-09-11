@@ -11,7 +11,7 @@ export function createRateLimiter({ windowMs = 60_000, max = 60, message = "Too 
     }
     if (current.count >= max) {
       res.set("Retry-After", String(Math.ceil((current.resetAt - now) / 1000)));
-      return res.status(429).json({ success: false, message });
+      return res.status(429).json({ success: false, message, errorCode: "RATE_LIMITED" });
     }
     current.count += 1;
     return next();

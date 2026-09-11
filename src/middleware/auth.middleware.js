@@ -1,17 +1,12 @@
 import jwt from "jsonwebtoken";
 import UserModel from "../models/user.model.js";
+import { sendError } from "../utils/http.js";
+import { logWarn } from "../utils/logger.js";
 
-/**
- * Authentication Middleware to verify JWT token
- * Prevents unauthorized requests from unauthenticated clients
- */
 export const verifyAuth = (req, res, next) => {
   try {
     if (!process.env.ACCESS_TOKEN_SECRET) {
-      return res.status(503).json({
-        success: false,
-        message: "Authentication service is not configured.",
-      });
+      return sendError(res, 503, "Authentication service is not configured.", "AUTH_UNAVAILABLE");
     }
 
     const authHeader = req.headers.authorization;
@@ -23,34 +18,34 @@ export const verifyAuth = (req, res, next) => {
       req.headers["x-access-token"];
 
     if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required. Please log in or create an account.",
-      });
+      return sendError(res, 401, "Authentication required. Please log in or create an account.", "UNAUTHENTICATED");
     }
 
     const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
 
     if (!decoded?._id) {
-      return res.status(403).json({
-        success: false,
-        message: "Invalid or expired session. Please log in again.",
-      });
+      return sendError(res, 403, "Invalid or expired session. Please log in again.", "INVALID_SESSION");
     }
 
-    UserModel.findById(decoded._id).select("isBlocked").lean()
+    UserModel.findById(decoded._id)
+      .select("isBlocked isDeleted accountStatus name email role photo")
+      .lean()
       .then((user) => {
-        if (!user || user.isBlocked) {
-          return res.status(403).json({ success: false, message: "This account is blocked or no longer available." });
+        if (!user || user.isDeleted) {
+          return sendError(res, 403, "This account is no longer available.", "ACCOUNT_UNAVAILABLE");
         }
-        req.user = decoded;
+        if (user.isBlocked || user.accountStatus === "banned") {
+          return sendError(res, 403, "This account has been banned.", "ACCOUNT_BANNED");
+        }
+        if (user.accountStatus === "suspended") {
+          return sendError(res, 403, "This account is suspended. Contact FoundMet support.", "ACCOUNT_SUSPENDED");
+        }
+        req.user = { ...decoded, name: user.name, email: user.email, photo: user.photo };
         next();
       })
-      .catch(() => res.status(503).json({ success: false, message: "Authentication service is temporarily unavailable." }));
-  } catch (err) {
-    return res.status(403).json({
-      success: false,
-      message: "Invalid or expired session. Please log in again.",
-    });
+      .catch(() => sendError(res, 503, "Authentication service is temporarily unavailable.", "AUTH_UNAVAILABLE"));
+  } catch {
+    logWarn("auth_failure", { path: req.path });
+    return sendError(res, 403, "Invalid or expired session. Please log in again.", "INVALID_SESSION");
   }
 };

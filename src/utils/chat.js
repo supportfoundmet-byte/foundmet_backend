@@ -1,35 +1,36 @@
 import ConnectionModel from "../models/connection.model.js";
 import MessageModel from "../models/message.model.js";
+import { sanitizeText } from "./sanitize.js";
 
 export function roomFor(userA, userB) {
   return [String(userA), String(userB)].sort().join("_");
 }
 
 export async function assertAcceptedConnection(userId, otherUserId) {
-  return ConnectionModel.exists({
-    status: "accepted",
+  const connection = await ConnectionModel.findOne({
     $or: [
       { fromUser: userId, toUser: otherUserId },
       { fromUser: otherUserId, toUser: userId },
     ],
-  });
+  }).lean();
+  if (!connection) return null;
+  if (connection.status === "blocked") return null;
+  if (connection.status !== "accepted") return null;
+  return connection;
 }
 
 export async function saveDirectMessage({ senderId, senderName, senderPhoto, receiverId, text, clientId = "" }) {
-  const trimmed = typeof text === "string" ? text.trim() : "";
+  const trimmed = sanitizeText(text, 2000);
   if (!trimmed) {
     const error = new Error("Message text is required.");
     error.statusCode = 400;
-    throw error;
-  }
-  if (trimmed.length > 2000) {
-    const error = new Error("Messages can be up to 2000 characters.");
-    error.statusCode = 400;
+    error.errorCode = "VALIDATION_ERROR";
     throw error;
   }
   if (String(senderId) === String(receiverId)) {
     const error = new Error("You cannot message yourself.");
     error.statusCode = 400;
+    error.errorCode = "VALIDATION_ERROR";
     throw error;
   }
 
@@ -37,6 +38,7 @@ export async function saveDirectMessage({ senderId, senderName, senderPhoto, rec
   if (!connected) {
     const error = new Error("Chat is available only after a connection is accepted.");
     error.statusCode = 403;
+    error.errorCode = "FORBIDDEN";
     throw error;
   }
 
@@ -59,5 +61,6 @@ export async function saveDirectMessage({ senderId, senderName, senderPhoto, rec
     receiverId: String(receiverId),
     text: trimmed,
     timestamp: saved.createdAt.toISOString(),
+    pending: false,
   };
 }

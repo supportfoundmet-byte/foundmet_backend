@@ -4,16 +4,27 @@ import PostModel from "../models/post.model.js";
 const postProjection = "text likes author createdAt updatedAt";
 
 export async function listPosts(req, res) {
-  const posts = await PostModel.find()
-    .populate({ path: "author", match: { isSuperAdmin: { $ne: true }, isBlocked: { $ne: true }, hiddenFromFeed: { $ne: true } }, select: "name photo" })
-    .select(postProjection)
-    .sort({ createdAt: -1 })
-    .limit(100)
-    .lean();
+  const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 20));
+  const filter = {};
+  const [posts, total] = await Promise.all([
+    PostModel.find(filter)
+      .populate({ path: "author", match: { isSuperAdmin: { $ne: true }, isBlocked: { $ne: true }, hiddenFromFeed: { $ne: true }, isDeleted: { $ne: true } }, select: "name photo" })
+      .select(postProjection)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+    PostModel.countDocuments(filter),
+  ]);
   res.set("Cache-Control", "private, no-store");
   const visiblePosts = posts.filter((post) => post.author);
   return res.json({
     success: true,
+    message: "Posts loaded",
+    page,
+    limit,
+    total,
     posts: visiblePosts.map((post) => ({ ...post, likeCount: post.likes.length, liked: post.likes.some((id) => String(id) === String(req.user._id)) })),
   });
 }

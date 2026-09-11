@@ -2,7 +2,10 @@ import UserModel from "../models/user.model.js";
 import jwt from "jsonwebtoken";
 import uploadFile from "../utils/imagekit.utils.js";
 import bcrypt from "bcrypt";
-import { coordinatesFromAddress, distanceKm } from "../utils/geo.js";
+import { boundingBoxFilter, coordinatesFromAddress, distanceKm, DISTANCE_FILTERS, publicLocation } from "../utils/geo.js";
+import { sendError, sendSuccess } from "../utils/http.js";
+import { logError } from "../utils/logger.js";
+import { isStrongPassword } from "../utils/sanitize.js";
 
 const usesCrossSiteCookies =
   process.env.NODE_ENV === "production" ||
@@ -35,6 +38,56 @@ const issueSession = (user) =>
     { expiresIn: "7d" },
   );
 
+const sessionUser = (user) => ({
+  _id: user._id,
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  matchRole: user.matchRole,
+  canBring: user.canBring,
+  buildType: user.buildType,
+  commitment: user.commitment,
+  hasProject: user.hasProject,
+  projectDetails: user.projectDetails,
+  projectLink: user.projectLink,
+  projectStatus: user.projectStatus,
+  lookingFor: user.lookingFor,
+  address: user.address,
+  location: publicLocation(user.location, user.address),
+  photo: user.photo,
+  phoneNumber: user.phoneNumber,
+  allowPhoneRequest: user.allowPhoneRequest,
+  discoverableNearby: user.discoverableNearby,
+  congratulations: user.congratulations,
+  createdAt: user.createdAt,
+});
+
+function toPublicFounder(user, viewerLat, viewerLng) {
+  const dist =
+    Number.isFinite(viewerLat) && Number.isFinite(viewerLng) && user.location?.lat && user.location?.lng
+      ? distanceKm(viewerLat, viewerLng, user.location.lat, user.location.lng)
+      : null;
+  return {
+    _id: user._id,
+    name: user.name,
+    role: user.role,
+    matchRole: user.matchRole,
+    canBring: user.canBring,
+    buildType: user.buildType,
+    commitment: user.commitment,
+    hasProject: user.hasProject,
+    projectDetails: user.projectDetails,
+    projectLink: user.projectLink,
+    projectStatus: user.projectStatus,
+    lookingFor: user.lookingFor,
+    photo: user.photo,
+    createdAt: user.createdAt,
+    address: user.location?.city || user.address?.split(",")[0] || "",
+    location: publicLocation(user.location, user.address),
+    distanceKm: dist,
+  };
+}
+
 async function createUser(req, res) {
   try {
     const {
@@ -58,38 +111,29 @@ async function createUser(req, res) {
     const normalizedName = typeof name === "string" ? name.trim() : "";
 
     if (!email || !name || !password) {
-      return res.status(400).json({
-        message: "Email, name and password are required",
-      });
+      return sendError(res, 400, "Email, name and password are required", "VALIDATION_ERROR");
     }
     if (
       !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(normalizedEmail) ||
       normalizedName.length < 2 ||
       normalizedName.length > 100 ||
-      typeof password !== "string" ||
-      password.length < 8 ||
-      password.length > 128
+      !isStrongPassword(password)
     ) {
-      return res.status(400).json({
-        message: "Use a valid email and a password with at least 8 characters",
-      });
+      return sendError(
+        res,
+        400,
+        "Use a valid email and a password with at least 8 characters, including a letter and a number.",
+        "VALIDATION_ERROR",
+      );
     }
 
-    // Check if user already exists
     const isUserExists = await UserModel.exists({ email: normalizedEmail });
-
     if (isUserExists) {
-      return res.status(403).json({
-        message: "User account already exists",
-      });
+      return sendError(res, 409, "An account with this email already exists.", "DUPLICATE_ACCOUNT");
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Upload profile photo if provided
     let photoUrl = null;
-
     if (req.file) {
       try {
         const result = await uploadFile(req.file.buffer);
@@ -99,7 +143,6 @@ async function createUser(req, res) {
       }
     }
 
-    // Sanitize optional enum values
     let validProjectStatus = undefined;
     if (hasProject === "yes" && ["idea", "development", "execution"].includes(projectStatus)) {
       validProjectStatus = projectStatus;
@@ -107,16 +150,15 @@ async function createUser(req, res) {
 
     let formattedLookingFor = [];
     if (Array.isArray(lookingFor)) {
-      formattedLookingFor = lookingFor.filter((role) =>
-        ["cto", "ceo", "cfo"].includes(role)
-      );
+      formattedLookingFor = lookingFor.filter((item) => ["cto", "ceo", "cfo"].includes(item));
     } else if (typeof lookingFor === "string" && ["cto", "ceo", "cfo"].includes(lookingFor)) {
       formattedLookingFor = [lookingFor];
     }
     const allowedStrengths = ["technology", "business", "design", "marketing", "product", "other"];
-    const formattedCanBring = (Array.isArray(canBring) ? canBring : [canBring]).filter((item) => allowedStrengths.includes(item));
+    const formattedCanBring = (Array.isArray(canBring) ? canBring : [canBring]).filter((item) =>
+      allowedStrengths.includes(item),
+    );
 
-    // Create user
     const user = await UserModel.create({
       email: normalizedEmail,
       name: normalizedName,
@@ -136,105 +178,100 @@ async function createUser(req, res) {
       photo: photoUrl,
     });
 
-    // Create JWT
     const accessToken = issueSession(user);
     res.cookie("accessToken", accessToken, authCookieOptions);
 
     return res.status(201).json({
+      success: true,
       message: "User account created successfully",
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        hasProject: user.hasProject,
-        projectDetails: user.projectDetails,
-        projectLink: user.projectLink,
-        projectStatus: user.projectStatus,
-        lookingFor: user.lookingFor,
-        address: user.address,
-        location: user.location,
-        photo: user.photo,
-      },
+      data: { user: sessionUser(user) },
+      user: sessionUser(user),
     });
   } catch (error) {
-    console.error("Create User Error:", error);
-
+    logError("create_user", error);
     if (error?.code === 11000) {
-      return res.status(409).json({ success: false, message: "User account already exists" });
+      return sendError(res, 409, "An account with this email already exists.", "DUPLICATE_ACCOUNT");
     }
-
     if (error?.name === "MongooseServerSelectionError" || error?.name === "MongoNetworkError") {
-      return res.status(503).json({
-        success: false,
-        message: "Registration service is temporarily unavailable. Please try again shortly.",
-      });
+      return sendError(res, 503, "Registration service is temporarily unavailable. Please try again shortly.", "SERVICE_UNAVAILABLE");
     }
-
-    return res.status(500).json({
-      success: false,
-      message: "Unable to create your account right now. Please try again.",
-    });
+    return sendError(res, 500, "Unable to create your account right now. Please try again.", "INTERNAL_ERROR");
   }
 }
 
 async function allUsers(req, res) {
-    try {
-        const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
-        const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 20));
-        const search = typeof req.query.search === "string" ? req.query.search.trim().slice(0, 80) : "";
-        const filter = { isSuperAdmin: { $ne: true }, discoverableNearby: true, hiddenFromFeed: { $ne: true }, isBlocked: { $ne: true } };
-        if (search) {
-          const safeSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          filter.$or = [
-            { name: { $regex: safeSearch, $options: "i" } },
-            { role: { $regex: safeSearch, $options: "i" } },
-            { projectDetails: { $regex: safeSearch, $options: "i" } },
-            { address: { $regex: safeSearch, $options: "i" } },
-          ];
-        }
-        const lat = Number.parseFloat(req.query.lat);
-        const lng = Number.parseFloat(req.query.lng);
-        const radiusKm = Number.parseInt(req.query.radiusKm, 10);
-        const city = typeof req.query.city === "string" ? req.query.city.trim().slice(0, 80) : "";
-        if (city) filter["location.city"] = { $regex: city.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
-        const [users, total] = await Promise.all([
-          UserModel
-            .find(filter)
-            .select(
-                "name role matchRole canBring buildType commitment hasProject projectDetails projectLink projectStatus lookingFor address photo location createdAt"
-            )
-            .sort({ createdAt: -1 })
-            .skip((page - 1) * limit)
-            .limit(limit)
-            .lean(),
-          UserModel.countDocuments(filter),
-        ]);
-        const withDistance = users.map((user) => {
-          const dist = Number.isFinite(lat) && Number.isFinite(lng) && user.location?.lat && user.location?.lng
-            ? distanceKm(lat, lng, user.location.lat, user.location.lng)
-            : null;
-          return { ...user, distanceKm: dist };
-        }).filter((user) => !Number.isFinite(radiusKm) || user.distanceKm === null || user.distanceKm <= radiusKm);
-
-        return res.status(200).json({
-            success: true,
-            count: withDistance.length,
-            page,
-            limit,
-            total,
-            pages: Math.ceil(total / limit),
-            users: withDistance
-        });
-
-    } catch (error) {
-        console.error("Feed Error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal Server Error."
-        });
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 20));
+    const search = typeof req.query.search === "string" ? req.query.search.trim().slice(0, 80) : "";
+    const skill = typeof req.query.skill === "string" ? req.query.skill.trim().toLowerCase() : "";
+    const role = typeof req.query.role === "string" ? req.query.role.trim().toLowerCase() : "";
+    const stage = typeof req.query.stage === "string" ? req.query.stage.trim().toLowerCase() : "";
+    const filter = {
+      isSuperAdmin: { $ne: true },
+      discoverableNearby: true,
+      hiddenFromFeed: { $ne: true },
+      isBlocked: { $ne: true },
+      isDeleted: { $ne: true },
+      accountStatus: { $nin: ["banned", "suspended"] },
+    };
+    if (search) {
+      const safeSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      filter.$or = [
+        { name: { $regex: safeSearch, $options: "i" } },
+        { role: { $regex: safeSearch, $options: "i" } },
+        { projectDetails: { $regex: safeSearch, $options: "i" } },
+        { address: { $regex: safeSearch, $options: "i" } },
+        { "location.city": { $regex: safeSearch, $options: "i" } },
+      ];
     }
+    const lat = Number.parseFloat(req.query.lat);
+    const lng = Number.parseFloat(req.query.lng);
+    let radiusKm = Number.parseInt(req.query.radiusKm, 10);
+    if (!DISTANCE_FILTERS.includes(radiusKm)) radiusKm = Number.NaN;
+    const city = typeof req.query.city === "string" ? req.query.city.trim().slice(0, 80) : "";
+    const state = typeof req.query.state === "string" ? req.query.state.trim().slice(0, 80) : "";
+    const country = typeof req.query.country === "string" ? req.query.country.trim().slice(0, 80) : "";
+    if (city) filter["location.city"] = { $regex: city.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
+    if (state) filter["location.state"] = { $regex: state.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
+    if (country) filter["location.country"] = { $regex: country.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
+    if (["founder", "co-founder"].includes(role)) filter.role = role;
+    if (["idea", "development", "execution"].includes(stage)) filter.projectStatus = stage;
+    if (skill) filter.canBring = skill;
+    if (Number.isFinite(lat) && Number.isFinite(lng) && Number.isFinite(radiusKm)) {
+      Object.assign(filter, boundingBoxFilter(lat, lng, radiusKm));
+    }
+
+    const users = await UserModel.find(filter)
+      .select(
+        "name role matchRole canBring buildType commitment hasProject projectDetails projectLink projectStatus lookingFor address photo location createdAt",
+      )
+      .sort({ createdAt: -1 })
+      .limit(400)
+      .lean();
+
+    const withDistance = users
+      .map((user) => toPublicFounder(user, lat, lng))
+      .filter((user) => !Number.isFinite(radiusKm) || user.distanceKm === null || user.distanceKm <= radiusKm);
+
+    const total = withDistance.length;
+    const paged = withDistance.slice((page - 1) * limit, page * limit);
+
+    return res.status(200).json({
+      success: true,
+      message: "Founders loaded",
+      count: paged.length,
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit) || 1,
+      users: paged,
+      data: { users: paged, page, limit, total },
+    });
+  } catch (error) {
+    logError("feed", error);
+    return sendError(res, 500, "Unable to load founders right now. Please try again.", "INTERNAL_ERROR");
+  }
 }
 
 async function loginUser(req, res) {
@@ -242,32 +279,31 @@ async function loginUser(req, res) {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({
-        message: "Email and password are required",
-      });
+      return sendError(res, 400, "Email and password are required", "VALIDATION_ERROR");
     }
     const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(normalizedEmail) || typeof password !== "string" || password.length < 8 || password.length > 128) {
-      return res.status(401).json({ message: "Invalid email or password" });
+      return sendError(res, 401, "Invalid email or password", "INVALID_CREDENTIALS");
     }
 
     const user = await UserModel.findOne({ email: normalizedEmail }).select("+password").lean();
 
     if (!user) {
-      return res.status(401).json({
-        message: "Invalid email or password",
-      });
+      return sendError(res, 401, "Invalid email or password", "INVALID_CREDENTIALS");
     }
-    if (user.isBlocked) {
-      return res.status(403).json({ success: false, message: "This account has been blocked. Contact FoundMet support." });
+    if (user.isDeleted) {
+      return sendError(res, 403, "This account is no longer available.", "ACCOUNT_UNAVAILABLE");
+    }
+    if (user.isBlocked || user.accountStatus === "banned") {
+      return sendError(res, 403, "This account has been blocked. Contact FoundMet support.", "ACCOUNT_BANNED");
+    }
+    if (user.accountStatus === "suspended") {
+      return sendError(res, 403, "This account is suspended. Contact FoundMet support.", "ACCOUNT_SUSPENDED");
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
-
     if (!isMatch) {
-      return res.status(401).json({
-        message: "Invalid email or password",
-      });
+      return sendError(res, 401, "Invalid email or password", "INVALID_CREDENTIALS");
     }
 
     await UserModel.updateOne({ _id: user._id }, { $set: { lastLogin: new Date() } });
@@ -275,81 +311,71 @@ async function loginUser(req, res) {
     res.cookie("accessToken", accessToken, authCookieOptions);
 
     return res.status(200).json({
+      success: true,
       message: "Logged in successfully",
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        hasProject: user.hasProject,
-        projectDetails: user.projectDetails,
-        projectLink: user.projectLink,
-        projectStatus: user.projectStatus,
-        lookingFor: user.lookingFor,
-        address: user.address,
-        location: user.location,
-        photo: user.photo,
-        phoneNumber: user.phoneNumber,
-        allowPhoneRequest: user.allowPhoneRequest,
-        discoverableNearby: user.discoverableNearby,
-      },
+      data: { user: sessionUser(user) },
+      user: sessionUser(user),
     });
   } catch (error) {
-    console.error("Login Error:", error);
-
+    logError("login", error);
     if (error?.name === "MongooseServerSelectionError" || error?.name === "MongoNetworkError") {
-      return res.status(503).json({
-        success: false,
-        message: "Login service is temporarily unavailable. Please try again shortly.",
-      });
+      return sendError(res, 503, "Login service is temporarily unavailable. Please try again shortly.", "SERVICE_UNAVAILABLE");
     }
-
-    return res.status(500).json({
-      success: false,
-      message: "Unable to sign in right now. Please try again.",
-    });
+    return sendError(res, 500, "Unable to sign in right now. Please try again.", "INTERNAL_ERROR");
   }
-
 }
 
 function logoutUser(req, res) {
   res.clearCookie("accessToken", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    secure: usesCrossSiteCookies,
+    sameSite: usesCrossSiteCookies ? "none" : "lax",
     path: "/",
   });
-  return res.status(200).json({ success: true });
+  return sendSuccess(res, "Logged out successfully");
 }
 
 async function getMe(req, res) {
   try {
-    const user = await UserModel.findById(req.user._id).select(
-      "name email role matchRole canBring buildType commitment hasProject projectDetails projectLink projectStatus lookingFor address location phoneNumber allowPhoneRequest discoverableNearby photo congratulations createdAt"
-    ).lean();
+    const user = await UserModel.findById(req.user._id)
+      .select(
+        "name email role matchRole canBring buildType commitment hasProject projectDetails projectLink projectStatus lookingFor address location phoneNumber allowPhoneRequest discoverableNearby photo congratulations createdAt warnings",
+      )
+      .lean();
 
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
+      return sendError(res, 404, "User not found", "NOT_FOUND");
     }
 
     return res.status(200).json({
       success: true,
-      user,
+      message: "Session loaded",
+      data: { user: sessionUser(user) },
+      user: sessionUser(user),
     });
   } catch (error) {
-    console.error("GetMe Error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal Server Error",
-    });
+    logError("get_me", error);
+    return sendError(res, 500, "Unable to load your profile right now.", "INTERNAL_ERROR");
   }
 }
 
 async function updateMe(req, res) {
-  const allowed = ["name", "address", "phoneNumber", "role", "matchRole", "canBring", "buildType", "commitment", "projectDetails", "projectLink", "projectStatus", "hasProject", "allowPhoneRequest", "discoverableNearby"];
+  const allowed = [
+    "name",
+    "address",
+    "phoneNumber",
+    "role",
+    "matchRole",
+    "canBring",
+    "buildType",
+    "commitment",
+    "projectDetails",
+    "projectLink",
+    "projectStatus",
+    "hasProject",
+    "allowPhoneRequest",
+    "discoverableNearby",
+  ];
   const updates = Object.fromEntries(Object.entries(req.body || {}).filter(([key]) => allowed.includes(key)));
   if (typeof updates.name === "string") updates.name = updates.name.trim();
   if (typeof updates.address === "string") {
@@ -359,12 +385,18 @@ async function updateMe(req, res) {
   if (typeof updates.projectDetails === "string") updates.projectDetails = updates.projectDetails.trim();
   if (typeof updates.projectLink === "string") updates.projectLink = updates.projectLink.trim();
   if (updates.name !== undefined && String(updates.name).trim().length < 2) {
-    return res.status(400).json({ success: false, message: "Name must be at least 2 characters." });
+    return sendError(res, 400, "Name must be at least 2 characters.", "VALIDATION_ERROR");
   }
-  const user = await UserModel.findByIdAndUpdate(req.user._id, updates, { new: true, runValidators: true })
-    .select("name email role matchRole canBring buildType commitment hasProject projectDetails projectLink projectStatus lookingFor address location phoneNumber allowPhoneRequest discoverableNearby photo");
-  if (!user) return res.status(404).json({ success: false, message: "User not found" });
-  return res.json({ success: true, user });
+  const user = await UserModel.findByIdAndUpdate(req.user._id, updates, { new: true, runValidators: true }).select(
+    "name email role matchRole canBring buildType commitment hasProject projectDetails projectLink projectStatus lookingFor address location phoneNumber allowPhoneRequest discoverableNearby photo congratulations createdAt",
+  );
+  if (!user) return sendError(res, 404, "User not found", "NOT_FOUND");
+  return res.json({
+    success: true,
+    message: "Profile updated",
+    data: { user: sessionUser(user) },
+    user: sessionUser(user),
+  });
 }
 
 export { createUser, allUsers, loginUser, logoutUser, getMe, updateMe };

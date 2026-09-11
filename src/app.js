@@ -20,6 +20,8 @@ import postRouter from "./routes/post.routes.js";
 import messageRouter from "./routes/message.routes.js";
 import { createRateLimiter } from "./middleware/rate-limit.middleware.js";
 import { isAllowedOrigin } from "./config/cors.config.js";
+import { sendError } from "./utils/http.js";
+import { logError } from "./utils/logger.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -32,7 +34,7 @@ app.use(
     contentSecurityPolicy: false,
   }),
 );
-app.use(morgan("dev"));
+app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -43,22 +45,17 @@ app.use(
 );
 app.use(createRateLimiter({ windowMs: 60_000, max: 180 }));
 
-// db config
-connectionDb().catch(() => {
-  // The API stays online so health checks and a later retry can report the outage.
-});
+connectionDb().catch(() => {});
 
-// health route
 app.get("/health", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "Server Health Is 100%",
-    database:
-      mongoose.connection.readyState === 1 ? "connected" : "unavailable",
+  const healthy = mongoose.connection.readyState === 1;
+  res.status(healthy ? 200 : 503).json({
+    success: healthy,
+    status: healthy ? "healthy" : "degraded",
+    database: healthy ? "connected" : "unavailable",
   });
 });
 
-// routes
 app.use(
   "/auth",
   createRateLimiter({
@@ -77,18 +74,23 @@ app.use("/api/v1/messages", messageRouter);
 app.use("/admin", adminRouter);
 
 app.use((req, res) => {
-  res.status(404).json({ success: false, message: "Route not found" });
+  sendError(res, 404, "Route not found", "NOT_FOUND");
 });
 
 app.use((error, req, res, next) => {
-  console.error("Unhandled backend error:", error);
+  logError("unhandled", error, { path: req.path });
   if (res.headersSent) return next(error);
+  if (error?.code === "LIMIT_FILE_SIZE") {
+    return sendError(res, 400, "That image is too large. Please use a file under 5 MB.", "VALIDATION_ERROR");
+  }
   const status = error.statusCode || error.status || 500;
-  res.status(status).json({
-    success: false,
-    message:
-      status >= 500 ? "Something went wrong. Please try again." : error.message,
-  });
+  const codes = { 400: "VALIDATION_ERROR", 401: "UNAUTHENTICATED", 403: "FORBIDDEN", 404: "NOT_FOUND", 409: "CONFLICT", 429: "RATE_LIMITED" };
+  sendError(
+    res,
+    status,
+    status >= 500 ? "Something went wrong. Please try again." : error.message || "Something went wrong.",
+    error.errorCode || codes[status] || "INTERNAL_ERROR",
+  );
 });
 
 export default app;

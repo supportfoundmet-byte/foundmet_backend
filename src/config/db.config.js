@@ -31,6 +31,7 @@ async function connectionDb() {
           name: process.env.SUPERADMIN_NAME || "FoundMet Superadmin",
           password: await bcrypt.hash(password, 12),
           isBlocked: false,
+          role: "SUPER_ADMIN",
         });
         console.log(
           "Superadmin account created from environment configuration.",
@@ -40,6 +41,7 @@ async function connectionDb() {
         const updates = {
           name: process.env.SUPERADMIN_NAME || existing.name || "FoundMet Superadmin",
           isBlocked: false,
+          role: existing.role || "SUPER_ADMIN",
         };
         if (!passwordMatches) updates.password = await bcrypt.hash(password, 12);
         await AdminModel.updateOne({ _id: existing._id }, { $set: updates });

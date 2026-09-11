@@ -39,7 +39,12 @@ io.use(async (socket, next) => {
     const token = cookieHeader.match(/(?:^|;\s*)accessToken=([^;]+)/)?.[1];
     if (!token || !process.env.ACCESS_TOKEN_SECRET) return next(new Error("Authentication required"));
     const payload = jwt.verify(decodeURIComponent(token), process.env.ACCESS_TOKEN_SECRET);
-    const user = await UserModel.findOne({ _id: payload._id, isBlocked: { $ne: true } }).select("_id name photo").lean();
+    const user = await UserModel.findOne({
+      _id: payload._id,
+      isBlocked: { $ne: true },
+      isDeleted: { $ne: true },
+      accountStatus: { $nin: ["banned", "suspended"] },
+    }).select("_id name photo").lean();
     if (!user) return next(new Error("Account unavailable"));
     socket.data.user = user;
     return next();

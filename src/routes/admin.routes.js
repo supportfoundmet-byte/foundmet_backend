@@ -1,6 +1,6 @@
 import express from "express";
-import { adminLogin, adminLogout, adminSession, listAdminData, systemStatus, createSuperAdmin, moderateAdmin, moderateUser, moderateReport, congratulateUser, deletePost } from "../controllers/admin.controller.js";
-import { verifySuperAdmin } from "../middleware/admin.middleware.js";
+import { adminLogin, adminLogout, adminSession, listAdminData, systemStatus, createSuperAdmin, moderateAdmin, moderateUser, moderateReport, congratulateUser, deletePost, listAuditLogs } from "../controllers/admin.controller.js";
+import { verifySuperAdmin, requireAdminRole } from "../middleware/admin.middleware.js";
 import { createRateLimiter } from "../middleware/rate-limit.middleware.js";
 
 const router = express.Router();
@@ -11,8 +11,9 @@ router.use(verifySuperAdmin);
 router.get("/session", adminSession);
 router.get("/data", listAdminData);
 router.get("/status", systemStatus);
-router.post("/admins", adminMutationLimiter, createSuperAdmin);
-router.patch("/admins/:adminId", adminMutationLimiter, moderateAdmin);
+router.get("/audit-logs", requireAdminRole("SUPER_ADMIN", "ADMIN"), listAuditLogs);
+router.post("/admins", adminMutationLimiter, requireAdminRole("SUPER_ADMIN", "ADMIN"), createSuperAdmin);
+router.patch("/admins/:adminId", adminMutationLimiter, requireAdminRole("SUPER_ADMIN"), moderateAdmin);
 router.patch("/users/:userId", adminMutationLimiter, moderateUser);
 router.patch("/reports/:reportId", adminMutationLimiter, moderateReport);
 router.delete("/posts/:postId", adminMutationLimiter, deletePost);

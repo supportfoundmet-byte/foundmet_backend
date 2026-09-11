@@ -140,8 +140,8 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
     location: {
-      lat: { type: Number, select: false },
-      lng: { type: Number, select: false },
+      lat: { type: Number },
+      lng: { type: Number },
       city: { type: String, trim: true, maxlength: 120 },
       state: { type: String, trim: true, maxlength: 120 },
       country: { type: String, trim: true, maxlength: 80, default: "India" },
