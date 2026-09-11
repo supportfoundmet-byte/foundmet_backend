@@ -5,12 +5,9 @@ import UserModel from './models/user.model.js';
 import ConnectionModel from './models/connection.model.js';
 import { saveDirectMessage } from './utils/chat.js';
 import app from './app.js';
+import { isAllowedOrigin } from './config/cors.config.js';
 
 const PORT = process.env.PORT || 4000;
-const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
 
 const server = http.createServer(app);
 server.on("error", (error) => {
@@ -26,7 +23,7 @@ server.on("error", (error) => {
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      if (isAllowedOrigin(origin)) return callback(null, true);
       return callback(new Error("Socket origin is not allowed"));
     },
     credentials: true,

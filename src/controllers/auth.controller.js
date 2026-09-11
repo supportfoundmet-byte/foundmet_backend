@@ -4,10 +4,14 @@ import uploadFile from "../utils/imagekit.utils.js";
 import bcrypt from "bcrypt";
 import { coordinatesFromAddress, distanceKm } from "../utils/geo.js";
 
+const usesCrossSiteCookies =
+  process.env.NODE_ENV === "production" ||
+  /^https:\/\//i.test(process.env.FRONTEND_URL || "");
+
 const authCookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  secure: usesCrossSiteCookies,
+  sameSite: usesCrossSiteCookies ? "none" : "lax",
   maxAge: 7 * 24 * 60 * 60 * 1000,
   path: "/",
 };

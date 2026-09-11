@@ -7,10 +7,14 @@ import AdminModel from "../models/admin.model.js";
 import PostModel from "../models/post.model.js";
 import { purgeUserById } from "../utils/purge-user.js";
 
+const usesCrossSiteCookies =
+  process.env.NODE_ENV === "production" ||
+  /^https:\/\//i.test(process.env.FRONTEND_URL || "");
+
 const cookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  secure: usesCrossSiteCookies,
+  sameSite: usesCrossSiteCookies ? "none" : "lax",
   maxAge: 8 * 60 * 60 * 1000,
   path: "/",
 };
