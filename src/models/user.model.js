@@ -155,7 +155,6 @@ const userSchema = new mongoose.Schema(
 userSchema.index({ discoverableNearby: 1, hiddenFromFeed: 1, isDeleted: 1, isBlocked: 1, createdAt: -1 });
 userSchema.index({ "location.city": 1, createdAt: -1 });
 userSchema.index({ "location.state": 1, createdAt: -1 });
-userSchema.index({ email: 1 }, { unique: true });
 userSchema.index({ name: 1 });
 userSchema.index({ accountStatus: 1, createdAt: -1 });
 

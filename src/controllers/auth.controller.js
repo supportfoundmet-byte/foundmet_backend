@@ -9,7 +9,9 @@ import { isStrongPassword } from "../utils/sanitize.js";
 
 const usesCrossSiteCookies =
   process.env.NODE_ENV === "production" ||
-  /^https:\/\//i.test(process.env.FRONTEND_URL || "");
+  (process.env.FRONTEND_URL || "")
+    .split(",")
+    .some((origin) => /^https:\/\//i.test(origin.trim()));
 
 const authCookieOptions = {
   httpOnly: true,
