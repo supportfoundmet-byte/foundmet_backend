@@ -2,19 +2,29 @@ import jwt from "jsonwebtoken";
 import UserModel from "../models/user.model.js";
 import { sendError } from "../utils/http.js";
 import { logWarn } from "../utils/logger.js";
-
 export function getAuthToken(req) {
   const authHeader = req.headers.authorization;
-  return (
+
+  const token =
     (authHeader && authHeader.startsWith("Bearer ")
       ? authHeader.slice("Bearer ".length).trim()
       : null) ||
     req.cookies?.accessToken ||
     req.headers["x-access-token"] ||
-    null
-  );
-}
+    null;
 
+  console.log("🔐 AUTH DEBUG:", {
+    path: req.path,
+    method: req.method,
+    hasAuthorizationHeader: !!authHeader,
+    hasCookieToken: !!req.cookies?.accessToken,
+    hasXAccessToken: !!req.headers["x-access-token"],
+    hasToken: !!token,
+    nodeEnv: process.env.NODE_ENV,
+  });
+
+  return token;
+}
 export const verifyAuth = (req, res, next) => {
   try {
     if (!process.env.ACCESS_TOKEN_SECRET) {
