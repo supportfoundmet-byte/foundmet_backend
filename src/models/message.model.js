@@ -7,6 +7,7 @@ const messageSchema = new mongoose.Schema(
     receiver: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
     text: { type: String, required: true, trim: true, maxlength: 2000 },
     clientId: { type: String, trim: true, maxlength: 80, default: "" },
+    readAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

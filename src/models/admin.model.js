@@ -6,6 +6,12 @@ const adminSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true, minlength: 2, maxlength: 100 },
     password: { type: String, required: true, select: false },
     isBlocked: { type: Boolean, default: false, index: true },
+    role: {
+      type: String,
+      enum: ["SUPER_ADMIN", "ADMIN", "MODERATOR"],
+      default: "SUPER_ADMIN",
+      index: true,
+    },
   },
   { timestamps: true },
 );

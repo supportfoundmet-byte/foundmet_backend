@@ -103,10 +103,28 @@ const userSchema = new mongoose.Schema(
     discoverableNearby: { type: Boolean, default: true },
     hiddenFromFeed: { type: Boolean, default: false, index: true },
     isBlocked: { type: Boolean, default: false, index: true },
+    accountStatus: {
+      type: String,
+      enum: ["active", "suspended", "banned"],
+      default: "active",
+      index: true,
+    },
+    isDeleted: { type: Boolean, default: false, index: true },
+    deletedAt: { type: Date, default: null },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, default: null },
+    deletionReason: { type: String, trim: true, maxlength: 500, default: "" },
+    isSuspicious: { type: Boolean, default: false, index: true },
+    isSpam: { type: Boolean, default: false, index: true },
     reportCount: { type: Number, default: 0, min: 0 },
     adminRole: { type: String, enum: ["none", "admin", "superadmin"], default: "none", index: true },
     blockedAt: { type: Date, default: null },
     blockedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    warnings: [
+      {
+        message: { type: String, maxlength: 500 },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
     lastLogin: { type: Date, default: null },
     isSuperAdmin: { type: Boolean, default: false, select: false },
     congratulations: [
@@ -122,9 +140,10 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
     location: {
-      lat: { type: Number },
-      lng: { type: Number },
+      lat: { type: Number, select: false },
+      lng: { type: Number, select: false },
       city: { type: String, trim: true, maxlength: 120 },
+      state: { type: String, trim: true, maxlength: 120 },
       country: { type: String, trim: true, maxlength: 80, default: "India" },
     },
   },
@@ -133,8 +152,12 @@ const userSchema = new mongoose.Schema(
   },
 );
 
-userSchema.index({ discoverableNearby: 1, hiddenFromFeed: 1, createdAt: -1 });
+userSchema.index({ discoverableNearby: 1, hiddenFromFeed: 1, isDeleted: 1, isBlocked: 1, createdAt: -1 });
 userSchema.index({ "location.city": 1, createdAt: -1 });
+userSchema.index({ "location.state": 1, createdAt: -1 });
+userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ name: 1 });
+userSchema.index({ accountStatus: 1, createdAt: -1 });
 
 const UserModel = mongoose.model("User", userSchema);
 
