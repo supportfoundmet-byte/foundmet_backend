@@ -30,6 +30,8 @@ const connectionSchema = new mongoose.Schema(
 
 // Prevent duplicate requests between the same two users
 connectionSchema.index({ fromUser: 1, toUser: 1 }, { unique: true });
+connectionSchema.index({ fromUser: 1, createdAt: -1 });
+connectionSchema.index({ toUser: 1, status: 1, createdAt: -1 });
 
 const ConnectionModel = mongoose.model("Connection", connectionSchema);
 

@@ -44,6 +44,7 @@ const ratingSchema = new mongoose.Schema(
 
 // One review per user per founder
 ratingSchema.index({ fromUser: 1, targetUser: 1 }, { unique: true });
+ratingSchema.index({ targetUser: 1, createdAt: -1 });
 
 const RatingModel = mongoose.model("Rating", ratingSchema);
 

@@ -6,6 +6,7 @@ import {
   removeConnection,
 } from "../controllers/connection.controller.js";
 import { verifyAuth } from "../middleware/auth.middleware.js";
+import { createRateLimiter } from "../middleware/rate-limit.middleware.js";
 
 const router = express.Router();
 
@@ -13,7 +14,7 @@ const router = express.Router();
 router.use(verifyAuth);
 
 /** POST /api/v1/connections/request/:userId */
-router.post("/request/:userId", sendConnectionRequest);
+router.post("/request/:userId", createRateLimiter({ windowMs: 60_000, max: 20, message: "Too many connection requests. Please try again shortly." }), sendConnectionRequest);
 
 /** GET /api/v1/connections */
 router.get("/", getMyConnections);

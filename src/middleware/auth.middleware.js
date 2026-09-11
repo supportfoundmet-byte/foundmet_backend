@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import UserModel from "../models/user.model.js";
 
 /**
  * Authentication Middleware to verify JWT token
@@ -6,6 +7,13 @@ import jwt from "jsonwebtoken";
  */
 export const verifyAuth = (req, res, next) => {
   try {
+    if (!process.env.ACCESS_TOKEN_SECRET) {
+      return res.status(503).json({
+        success: false,
+        message: "Authentication service is not configured.",
+      });
+    }
+
     const authHeader = req.headers.authorization;
     const token =
       req.cookies?.accessToken ||
@@ -21,13 +29,24 @@ export const verifyAuth = (req, res, next) => {
       });
     }
 
-    const decoded = jwt.verify(
-      token,
-      process.env.ACCESS_TOKEN_SECRET || "foundmet_secret_key_123"
-    );
+    const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
 
-    req.user = decoded;
-    next();
+    if (!decoded?._id) {
+      return res.status(403).json({
+        success: false,
+        message: "Invalid or expired session. Please log in again.",
+      });
+    }
+
+    UserModel.findById(decoded._id).select("isBlocked").lean()
+      .then((user) => {
+        if (!user || user.isBlocked) {
+          return res.status(403).json({ success: false, message: "This account is blocked or no longer available." });
+        }
+        req.user = decoded;
+        next();
+      })
+      .catch(() => res.status(503).json({ success: false, message: "Authentication service is temporarily unavailable." }));
   } catch (err) {
     return res.status(403).json({
       success: false,
