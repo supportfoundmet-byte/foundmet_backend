@@ -81,14 +81,28 @@ app.use((error, req, res, next) => {
   logError("unhandled", error, { path: req.path });
   if (res.headersSent) return next(error);
   if (error?.code === "LIMIT_FILE_SIZE") {
-    return sendError(res, 400, "That image is too large. Please use a file under 5 MB.", "VALIDATION_ERROR");
+    return sendError(
+      res,
+      400,
+      "That image is too large. Please use a file under 5 MB.",
+      "VALIDATION_ERROR",
+    );
   }
   const status = error.statusCode || error.status || 500;
-  const codes = { 400: "VALIDATION_ERROR", 401: "UNAUTHENTICATED", 403: "FORBIDDEN", 404: "NOT_FOUND", 409: "CONFLICT", 429: "RATE_LIMITED" };
+  const codes = {
+    400: "VALIDATION_ERROR",
+    401: "UNAUTHENTICATED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    409: "CONFLICT",
+    429: "RATE_LIMITED",
+  };
   sendError(
     res,
     status,
-    status >= 500 ? "Something went wrong. Please try again." : error.message || "Something went wrong.",
+    status >= 500
+      ? "Something went wrong. Please try again."
+      : error.message || "Something went wrong.",
     error.errorCode || codes[status] || "INTERNAL_ERROR",
   );
 });
