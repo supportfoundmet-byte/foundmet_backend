@@ -19,7 +19,14 @@ export async function assertAcceptedConnection(userId, otherUserId) {
   return connection;
 }
 
-export async function saveDirectMessage({ senderId, senderName, senderPhoto, receiverId, text, clientId = "" }) {
+export async function saveDirectMessage({
+  senderId,
+  senderName,
+  senderPhoto,
+  receiverId,
+  text,
+  clientId = "",
+}) {
   const trimmed = sanitizeText(text, 2000);
   if (!trimmed) {
     const error = new Error("Message text is required.");
@@ -36,7 +43,9 @@ export async function saveDirectMessage({ senderId, senderName, senderPhoto, rec
 
   const connected = await assertAcceptedConnection(senderId, receiverId);
   if (!connected) {
-    const error = new Error("Chat is available only after a connection is accepted.");
+    const error = new Error(
+      "Chat is available only after a connection is accepted.",
+    );
     error.statusCode = 403;
     error.errorCode = "FORBIDDEN";
     throw error;

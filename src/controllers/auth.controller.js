@@ -12,6 +12,7 @@ import {
 import { sendError, sendSuccess } from "../utils/http.js";
 import { logError } from "../utils/logger.js";
 import { isStrongPassword } from "../utils/sanitize.js";
+import { sendWelcomeEmail } from "../utils/mailer.js";
 
 const usesCrossSiteCookies =
   process.env.NODE_ENV === "production" ||
@@ -93,7 +94,7 @@ function toPublicFounder(user, viewerLat, viewerLng) {
     lookingFor: user.lookingFor,
     photo: user.photo,
     createdAt: user.createdAt,
-    address: user.location?.city || user.address?.split(",")[0] || "",
+    address: user.address || "",
     location: publicLocation(user.location, user.address),
     distanceKm: dist,
   };
@@ -112,6 +113,8 @@ async function createUser(req, res) {
       projectStatus,
       lookingFor,
       address,
+      latitude,
+      longitude,
       matchRole,
       canBring,
       buildType,
@@ -211,7 +214,7 @@ async function createUser(req, res) {
       projectStatus: validProjectStatus,
       lookingFor: formattedLookingFor,
       address: address ? address.trim() : undefined,
-      location: coordinatesFromAddress(address),
+      location: coordinatesFromAddress(address, { latitude, longitude }),
       matchRole: ["co-founder", "builder"].includes(matchRole)
         ? matchRole
         : "co-founder",
@@ -229,6 +232,12 @@ async function createUser(req, res) {
 
     const accessToken = issueSession(user);
     res.cookie("accessToken", accessToken, authCookieOptions);
+
+    try {
+      await sendWelcomeEmail({ email: user.email, name: user.name });
+    } catch (emailError) {
+      logError("welcome_email", emailError, { email: user.email });
+    }
 
     return res.status(201).json({
       success: true,
@@ -343,12 +352,29 @@ async function allUsers(req, res) {
     if (["idea", "development", "execution"].includes(stage))
       filter.projectStatus = stage;
     if (skill) filter.canBring = skill;
+
+    // Merge the radius/bounding-box constraint in defensively: if it ever
+    // produces its own `$or` (e.g. a util that wraps the antimeridian as
+    // two alternative ranges), a plain Object.assign would silently
+    // overwrite the search `$or` above and drop the person's search term
+    // from the query with no error. Combine them with `$and` instead so
+    // both constraints always apply together.
     if (
       Number.isFinite(lat) &&
       Number.isFinite(lng) &&
       Number.isFinite(radiusKm)
     ) {
-      Object.assign(filter, boundingBoxFilter(lat, lng, radiusKm));
+      const geoFilter = boundingBoxFilter(lat, lng, radiusKm);
+      const { $or: geoOr, ...geoRest } = geoFilter;
+      Object.assign(filter, geoRest);
+      if (geoOr) {
+        const clauses = [{ $or: geoOr }];
+        if (filter.$or) {
+          clauses.unshift({ $or: filter.$or });
+          delete filter.$or;
+        }
+        filter.$and = [...(filter.$and || []), ...clauses];
+      }
     }
 
     const users = await UserModel.find(filter)
@@ -566,7 +592,10 @@ async function updateMe(req, res) {
   if (typeof updates.name === "string") updates.name = updates.name.trim();
   if (typeof updates.address === "string") {
     updates.address = updates.address.trim();
-    updates.location = coordinatesFromAddress(updates.address);
+    updates.location = coordinatesFromAddress(updates.address, {
+      latitude: req.body?.latitude,
+      longitude: req.body?.longitude,
+    });
   }
   if (typeof updates.projectDetails === "string")
     updates.projectDetails = updates.projectDetails.trim();

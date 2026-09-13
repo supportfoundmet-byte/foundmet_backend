@@ -1,4 +1,5 @@
-const SENSITIVE = /password|token|secret|authorization|cookie|mongo|credential|apikey|private/i;
+const SENSITIVE =
+  /password|token|secret|authorization|cookie|mongo|credential|apikey|private/i;
 
 function scrub(value) {
   if (value && typeof value === "object") {
