@@ -18,6 +18,8 @@ import reportRouter from "./routes/report.routes.js";
 import adminRouter from "./routes/admin.routes.js";
 import postRouter from "./routes/post.routes.js";
 import messageRouter from "./routes/message.routes.js";
+import pushRouter from "./routes/push.routes.js";
+import callRouter from "./routes/call.routes.js";
 import { createRateLimiter } from "./middleware/rate-limit.middleware.js";
 import { isAllowedOrigin } from "./config/cors.config.js";
 import { sendError } from "./utils/http.js";
@@ -71,6 +73,8 @@ app.use("/api/v1/ratings", ratingRouter);
 app.use("/api/v1/reports", reportRouter);
 app.use("/api/v1/posts", postRouter);
 app.use("/api/v1/messages", messageRouter);
+app.use("/api/v1/push", pushRouter);
+app.use("/api/v1/calls", callRouter);
 app.use("/admin", adminRouter);
 
 app.use((req, res) => {

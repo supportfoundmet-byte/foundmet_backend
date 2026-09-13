@@ -162,7 +162,7 @@ export async function listMessages(req, res) {
       MessageModel.countDocuments({ roomId }),
     ]);
 
-    await MessageModel.updateMany(
+    const readResult = await MessageModel.updateMany(
       {
         roomId,
         receiver: userId,
@@ -174,6 +174,17 @@ export async function listMessages(req, res) {
         },
       }
     );
+
+    // Emit real-time read receipt to the other user
+    if (readResult.modifiedCount > 0) {
+      const io = req.app.get("io");
+      io?.to(`user:${otherUserId}`).emit("messages_read", {
+        roomId,
+        readBy: String(userId),
+        readAt: new Date().toISOString(),
+        count: readResult.modifiedCount,
+      });
+    }
 
     const ordered = messages.reverse();
 

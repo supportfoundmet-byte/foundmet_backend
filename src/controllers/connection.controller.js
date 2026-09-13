@@ -3,6 +3,7 @@ import UserModel from "../models/user.model.js";
 import mongoose from "mongoose";
 import { sendError } from "../utils/http.js";
 import { logError } from "../utils/logger.js";
+import { sendPushToUser } from "../utils/push.js";
 
 function pairQuery(userA, userB) {
   return {
@@ -107,6 +108,32 @@ export async function sendConnectionRequest(req, res) {
       message: typeof req.body?.message === "string" ? req.body.message.trim().slice(0, 500) : "",
     });
 
+    // ── Real-time notification to recipient ───────────────────────────
+    const io = req.app.get("io");
+    const senderName = req.user.name || "A founder";
+    const senderPhoto = req.user.photo || "";
+    const notifPayload = {
+      type: "connection_request",
+      connectionId: String(connection._id),
+      fromUserId: String(fromUserId),
+      fromUserName: senderName,
+      fromUserPhoto: senderPhoto,
+      message: connection.message,
+      timestamp: connection.createdAt?.toISOString() || new Date().toISOString(),
+    };
+
+    // Socket event (in-app)
+    io?.to(`user:${toUserId}`).emit("connection_request_received", notifPayload);
+
+    // Browser push (if offline)
+    sendPushToUser(toUserId, {
+      title: "New Connection Request",
+      body: `${senderName} wants to connect with you.`,
+      icon: senderPhoto || undefined,
+      url: "/dashboard/connections",
+      tag: `conn-${fromUserId}`,
+    }).catch((err) => logError("push_connection_request", err));
+
     return res.status(201).json({
       success: true,
       message: `Connection request sent to ${targetUser.name}!`,
@@ -204,6 +231,35 @@ export async function respondConnectionRequest(req, res) {
 
     connection.status = status;
     await connection.save();
+
+    // ── Real-time notification to the original sender ─────────────────
+    const io = req.app.get("io");
+    const senderId = String(connection.fromUser);
+    const responderName = req.user.name || "A founder";
+    const responderPhoto = req.user.photo || "";
+    const notifPayload = {
+      type: "connection_response",
+      connectionId: String(connection._id),
+      responderId: String(userId),
+      responderName,
+      responderPhoto,
+      status, // "accepted" or "rejected"
+      timestamp: new Date().toISOString(),
+    };
+
+    // Socket event (in-app)
+    io?.to(`user:${senderId}`).emit("connection_request_responded", notifPayload);
+
+    // Browser push (if offline)
+    if (status === "accepted") {
+      sendPushToUser(senderId, {
+        title: "Connection Accepted!",
+        body: `${responderName} accepted your connection request.`,
+        icon: responderPhoto || undefined,
+        url: "/dashboard/connections",
+        tag: `conn-resp-${userId}`,
+      }).catch(() => {});
+    }
 
     return res.status(200).json({
       success: true,

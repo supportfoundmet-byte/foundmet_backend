@@ -126,6 +126,7 @@ const userSchema = new mongoose.Schema(
       },
     ],
     lastLogin: { type: Date, default: null },
+    lastSeen: { type: Date, default: null },
     isSuperAdmin: { type: Boolean, default: false, select: false },
     congratulations: [
       {
