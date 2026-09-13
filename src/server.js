@@ -111,14 +111,18 @@ io.use(async (socket, next) => {
     // Support cookie-based token (main auth) OR Bearer token in handshake auth
     const cookieHeader = socket.handshake.headers.cookie || '';
     const cookieToken = cookieHeader.match(/(?:^|;\s*)accessToken=([^;]+)/)?.[1];
-    const bearerToken = socket.handshake.auth?.token;
-    const token = cookieToken || bearerToken;
+    const rawBearer = socket.handshake.auth?.token;
+    const tokenCandidate = cookieToken || rawBearer;
 
-    if (!token || !process.env.ACCESS_TOKEN_SECRET)
+    if (!tokenCandidate || !process.env.ACCESS_TOKEN_SECRET)
       return next(new Error('Authentication required'));
 
+    const cleanToken = tokenCandidate.startsWith('Bearer ')
+      ? tokenCandidate.slice(7).trim()
+      : tokenCandidate.trim();
+
     const payload = jwt.verify(
-      decodeURIComponent(token),
+      decodeURIComponent(cleanToken),
       process.env.ACCESS_TOKEN_SECRET,
     );
 
@@ -144,7 +148,7 @@ io.on('connection', (socket) => {
   const userId = String(socket.data.user._id);
   socket.data.userId = userId;
 
-  // Join this user's personal room so we can target them from controllers
+  // Join this user's personal room so we can target them from controllers & calls
   socket.join(`user:${userId}`);
 
   // Track socket count (multiple tabs = multiple sockets for same user)
@@ -164,7 +168,11 @@ io.on('connection', (socket) => {
   // ─────────────────────────────────────────────────────────────────────────
 
   /** Client can request re-broadcast of the full online list at any time */
-  socket.on('register_presence', () => {
+  socket.on('register_presence', ({ userId: clientUserId } = {}) => {
+    if (clientUserId) {
+      socket.join(`user:${clientUserId}`);
+    }
+    socket.join(`user:${userId}`);
     broadcastOnlineUsers();
   });
 
@@ -333,11 +341,6 @@ io.on('connection', (socket) => {
 
   /**
    * STEP 1 — Caller initiates a call
-   *
-   * Client emits: call_user { calleeId, offer (SDP), callType: "video"|"audio" }
-   * Server responds:
-   *   → to callee:  call_incoming  { callId, callerId, callerName, callerPhoto, callType }
-   *   → to caller:  call_rejected  { callId, reason: "offline" | "busy" }  (if unreachable)
    */
   socket.on('call_user', async ({ calleeId, offer, callType = 'video' }, ack) => {
     try {
@@ -362,6 +365,9 @@ io.on('connection', (socket) => {
         (c) => c.calleeId === String(calleeId) || c.callerId === String(calleeId),
       );
 
+      const callerName = socket.data.user.name || 'Founder';
+      const callerPhoto = socket.data.user.photo || '';
+
       // Save the call record as "missed" by default (updated when answered)
       const callRecord = await CallModel.create({
         caller: userId,
@@ -376,7 +382,30 @@ io.on('connection', (socket) => {
           calleeId: String(calleeId),
           reason: 'busy',
         });
-        if (typeof ack === 'function') ack({ ok: false, callId, reason: 'busy' });
+        if (typeof ack === 'function') ack({ ok: false, callId, reason: 'busy', message: 'User is currently in another call.' });
+        return;
+      }
+
+      // Check if callee is currently online (socket room check or onlineUsers map)
+      const calleeRoom = io.sockets.adapter.rooms.get(`user:${calleeId}`);
+      const calleeOnline = (calleeRoom && calleeRoom.size > 0) || isUserOnline(calleeId);
+
+      if (!calleeOnline) {
+        // Send Web Push notification about missed call
+        sendPushToUser(calleeId, {
+          title: `📞 Missed ${callType === 'audio' ? 'voice' : 'video'} call`,
+          body: `${callerName} tried calling you`,
+          icon: callerPhoto || undefined,
+          url: '/dashboard',
+          tag: `call-${callId}`,
+        }).catch(() => {});
+
+        socket.emit('call_rejected', {
+          callId,
+          calleeId: String(calleeId),
+          reason: 'offline',
+        });
+        if (typeof ack === 'function') ack({ ok: false, callId, reason: 'offline', message: 'User is currently offline. A push notification has been sent.' });
         return;
       }
 
@@ -388,10 +417,7 @@ io.on('connection', (socket) => {
         startedAt: null,
       });
 
-      const callerName = socket.data.user.name || 'Founder';
-      const callerPhoto = socket.data.user.photo || '';
-
-      // Tell the callee about the incoming call
+      // Ring the callee in real-time
       io.to(`user:${calleeId}`).emit('call_incoming', {
         callId,
         callerId: userId,
@@ -401,17 +427,14 @@ io.on('connection', (socket) => {
         callType,
       });
 
-      // Push notification if callee has tab closed / is offline
-      if (!isUserOnline(calleeId)) {
-        // Still notify even if not connected via socket (rare edge case)
-        sendPushToUser(calleeId, {
-          title: `📞 Incoming ${callType === 'audio' ? 'voice' : 'video'} call`,
-          body: `${callerName} is calling you`,
-          icon: callerPhoto || undefined,
-          url: '/calls/incoming',
-          tag: `call-${callId}`,
-        }).catch(() => {});
-      }
+      // Background push notification
+      sendPushToUser(calleeId, {
+        title: `📞 Incoming ${callType === 'audio' ? 'voice' : 'video'} call`,
+        body: `${callerName} is calling you`,
+        icon: callerPhoto || undefined,
+        url: '/dashboard',
+        tag: `call-${callId}`,
+      }).catch(() => {});
 
       if (typeof ack === 'function') ack({ ok: true, callId });
     } catch (err) {
@@ -422,11 +445,6 @@ io.on('connection', (socket) => {
 
   /**
    * STEP 2a — Callee accepts the call
-   *
-   * Client emits: call_accepted { callId, answer (SDP) }
-   * Server:
-   *   → to caller:  call_accepted { callId, calleeId, answer }
-   *   updates call record to status="answered", startedAt=now
    */
   socket.on('call_accepted', async ({ callId, answer }, ack) => {
     try {
@@ -460,28 +478,19 @@ io.on('connection', (socket) => {
 
   /**
    * STEP 2b — Callee rejects the call
-   *
-   * Client emits: call_rejected { callId }
-   * Server:
-   *   → to caller:  call_rejected { callId, reason: "rejected" }
-   *   updates call record to status="rejected"
    */
   socket.on('call_rejected', async ({ callId }, ack) => {
     try {
       const call = activeCalls.get(callId);
-      if (!call || call.calleeId !== userId) {
-        if (typeof ack === 'function') ack({ ok: false, message: 'Call not found.' });
-        return;
+      if (call) {
+        activeCalls.delete(callId);
+        await CallModel.findByIdAndUpdate(call.recordId, { status: 'rejected' }).catch(() => {});
+        const otherId = call.callerId === userId ? call.calleeId : call.callerId;
+        io.to(`user:${otherId}`).emit('call_rejected', {
+          callId,
+          reason: 'rejected',
+        });
       }
-
-      activeCalls.delete(callId);
-
-      await CallModel.findByIdAndUpdate(call.recordId, { status: 'rejected' });
-
-      io.to(`user:${call.callerId}`).emit('call_rejected', {
-        callId,
-        reason: 'rejected',
-      });
 
       if (typeof ack === 'function') ack({ ok: true });
     } catch (err) {
@@ -492,47 +501,29 @@ io.on('connection', (socket) => {
 
   /**
    * STEP 3 — Either party ends the call
-   *
-   * Client emits: call_ended { callId }
-   * Server:
-   *   → to the other party: call_ended { callId }
-   *   updates call record with endedAt and duration
    */
   socket.on('call_ended', async ({ callId }, ack) => {
     try {
       const call = activeCalls.get(callId);
-      if (!call) {
-        // Already cleaned up — silently OK
-        if (typeof ack === 'function') ack({ ok: true });
-        return;
-      }
-
-      // Only the caller or callee can end the call
-      if (call.callerId !== userId && call.calleeId !== userId) {
-        if (typeof ack === 'function') ack({ ok: false, message: 'Not your call.' });
-        return;
-      }
-
-      activeCalls.delete(callId);
-
-      const now = new Date();
-      const duration =
-        call.startedAt
+      if (call) {
+        activeCalls.delete(callId);
+        const now = new Date();
+        const duration = call.startedAt
           ? Math.round((now - call.startedAt) / 1000)
           : 0;
 
-      await CallModel.findByIdAndUpdate(call.recordId, {
-        status: call.startedAt ? 'ended' : 'missed',
-        endedAt: now,
-        duration,
-      });
+        await CallModel.findByIdAndUpdate(call.recordId, {
+          status: call.startedAt ? 'ended' : 'missed',
+          endedAt: now,
+          duration,
+        }).catch(() => {});
 
-      const otherId =
-        call.callerId === userId ? call.calleeId : call.callerId;
-
-      io.to(`user:${otherId}`).emit('call_ended', { callId, endedBy: userId });
-
-      if (typeof ack === 'function') ack({ ok: true, duration });
+        const otherId = call.callerId === userId ? call.calleeId : call.callerId;
+        io.to(`user:${otherId}`).emit('call_ended', { callId, endedBy: userId, duration });
+        if (typeof ack === 'function') ack({ ok: true, duration });
+      } else {
+        if (typeof ack === 'function') ack({ ok: true });
+      }
     } catch (err) {
       console.error('[Socket.IO] call_ended error:', err.message);
       if (typeof ack === 'function') ack({ ok: false, message: 'Error ending call.' });
@@ -540,17 +531,11 @@ io.on('connection', (socket) => {
   });
 
   /**
-   * STEP 4 — ICE candidate exchange (WebRTC connection establishment)
-   *
-   * Client emits: webrtc_ice_candidate { callId, candidate, targetUserId }
-   * Server forwards it to targetUserId
+   * STEP 4 — ICE candidate exchange
    */
   socket.on('webrtc_ice_candidate', ({ callId, candidate, targetUserId }) => {
     try {
-      const call = activeCalls.get(callId);
-      if (!call) return;
-      if (call.callerId !== userId && call.calleeId !== userId) return;
-
+      if (!targetUserId || !candidate) return;
       io.to(`user:${targetUserId}`).emit('webrtc_ice_candidate', {
         callId,
         candidate,
@@ -562,15 +547,11 @@ io.on('connection', (socket) => {
   });
 
   /**
-   * Forward a WebRTC offer (re-negotiation or direct offer)
-   * Client emits: webrtc_offer { callId, offer, targetUserId }
+   * Forward WebRTC offer (re-negotiation)
    */
   socket.on('webrtc_offer', ({ callId, offer, targetUserId }) => {
     try {
-      const call = activeCalls.get(callId);
-      if (!call) return;
-      if (call.callerId !== userId && call.calleeId !== userId) return;
-
+      if (!targetUserId || !offer) return;
       io.to(`user:${targetUserId}`).emit('webrtc_offer', {
         callId,
         offer,
@@ -582,15 +563,11 @@ io.on('connection', (socket) => {
   });
 
   /**
-   * Forward a WebRTC answer
-   * Client emits: webrtc_answer { callId, answer, targetUserId }
+   * Forward WebRTC answer
    */
   socket.on('webrtc_answer', ({ callId, answer, targetUserId }) => {
     try {
-      const call = activeCalls.get(callId);
-      if (!call) return;
-      if (call.callerId !== userId && call.calleeId !== userId) return;
-
+      if (!targetUserId || !answer) return;
       io.to(`user:${targetUserId}`).emit('webrtc_answer', {
         callId,
         answer,
