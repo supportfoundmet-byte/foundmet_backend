@@ -436,8 +436,8 @@ async function loginUser(req, res) {
     if (
       !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(normalizedEmail) ||
       typeof password !== "string" ||
-      password.length < 8 ||
-      password.length > 128
+      !password ||
+      password.length > 256
     ) {
       return sendError(
         res,
