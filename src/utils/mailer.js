@@ -110,6 +110,12 @@ function getBrandHeader({ includeLogo = true } = {}) {
 
 // Send welcome email
 export async function sendWelcomeEmail({ email, name }) {
+  const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+  if (!normalizedEmail) {
+    console.error("[FoundMet] Welcome email skipped: missing recipient email");
+    return false;
+  }
+
   const mailTransporter = getTransporter();
 
   if (!mailTransporter) {
@@ -129,7 +135,7 @@ export async function sendWelcomeEmail({ email, name }) {
   try {
     await mailTransporter.sendMail({
       from: getMailFrom(),
-      to: email,
+      to: normalizedEmail,
 
       subject: "Welcome to FoundMet 🚀",
 
@@ -222,6 +228,12 @@ export async function sendConnectionRequestEmail({
   senderName,
   message = "",
 }) {
+  const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+  if (!normalizedEmail) {
+    console.error("[FoundMet] Connection email skipped: missing recipient email");
+    return false;
+  }
+
   const mailTransporter = getTransporter();
 
   if (!mailTransporter) {
@@ -244,7 +256,7 @@ export async function sendConnectionRequestEmail({
   try {
     await mailTransporter.sendMail({
       from: getMailFrom(),
-      to: email,
+      to: normalizedEmail,
 
       subject: `${senderName} wants to connect with you on FoundMet 🚀`,
 

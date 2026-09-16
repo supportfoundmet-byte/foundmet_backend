@@ -74,6 +74,14 @@ export async function sendConnectionRequest(req, res) {
     if (!targetUser) {
       return sendError(res, 404, "Founder not found", "NOT_FOUND");
     }
+    if (!targetUser.email) {
+      return sendError(
+        res,
+        400,
+        "This founder profile does not have a valid email address.",
+        "VALIDATION_ERROR",
+      );
+    }
 
     const existing = await ConnectionModel.findOne(
       pairQuery(fromUserId, toUserId),
@@ -137,14 +145,16 @@ export async function sendConnectionRequest(req, res) {
       });
     }
 
+    const connectionMessage =
+      typeof req.body?.message === "string"
+        ? req.body.message.trim().slice(0, 500)
+        : "";
+
     const connection = await ConnectionModel.create({
       fromUser: fromUserId,
       toUser: toUserId,
       status: "pending",
-      message:
-        typeof req.body?.message === "string"
-          ? req.body.message.trim().slice(0, 500)
-          : "",
+      message: connectionMessage,
     });
 
     try {

@@ -11,7 +11,7 @@ import {
 } from "../utils/geo.js";
 import { sendError, sendSuccess } from "../utils/http.js";
 import { logError } from "../utils/logger.js";
-import { isStrongPassword } from "../utils/sanitize.js";
+import { validateCreateUserInput } from "../utils/registrationValidation.js";
 import { sendWelcomeEmail } from "../utils/mailer.js";
 
 const usesCrossSiteCookies =
@@ -121,31 +121,26 @@ async function createUser(req, res) {
       commitment,
     } = req.body;
 
-    const normalizedEmail =
-      typeof email === "string" ? email.trim().toLowerCase() : "";
-    const normalizedName = typeof name === "string" ? name.trim() : "";
+    const validation = validateCreateUserInput({
+      email,
+      name,
+      password,
+      hasProject,
+      projectDetails,
+      imageProvided: Boolean(req.file),
+    });
 
-    if (!email || !name || !password) {
+    if (!validation.valid) {
       return sendError(
         res,
         400,
-        "Email, name and password are required",
+        validation.message,
         "VALIDATION_ERROR",
       );
     }
-    if (
-      !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(normalizedEmail) ||
-      normalizedName.length < 2 ||
-      normalizedName.length > 100 ||
-      !isStrongPassword(password)
-    ) {
-      return sendError(
-        res,
-        400,
-        "Use a valid email and a password with at least 8 characters, including a letter and a number.",
-        "VALIDATION_ERROR",
-      );
-    }
+
+    const normalizedEmail = validation.normalizedEmail;
+    const normalizedName = validation.normalizedName;
 
     const isUserExists = await UserModel.exists({ email: normalizedEmail });
     if (isUserExists) {
