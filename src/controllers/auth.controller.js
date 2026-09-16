@@ -10,7 +10,7 @@ import {
   publicLocation,
 } from "../utils/geo.js";
 import { sendError, sendSuccess } from "../utils/http.js";
-import { logError } from "../utils/logger.js";
+import { logError, logInfo } from "../utils/logger.js";
 import { validateCreateUserInput } from "../utils/registrationValidation.js";
 import { sendWelcomeEmail } from "../utils/mailer.js";
 
@@ -131,6 +131,10 @@ async function createUser(req, res) {
     });
 
     if (!validation.valid) {
+      logInfo("registration_validation_failed", {
+        email: validation.normalizedEmail,
+        issues: validation.issues,
+      });
       return sendError(
         res,
         400,
@@ -144,6 +148,7 @@ async function createUser(req, res) {
 
     const isUserExists = await UserModel.exists({ email: normalizedEmail });
     if (isUserExists) {
+      logInfo("registration_duplicate_email", { email: normalizedEmail });
       return sendError(
         res,
         409,
@@ -152,17 +157,36 @@ async function createUser(req, res) {
       );
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    let photoUrl = null;
-    if (req.file) {
-      try {
-        const result = await uploadFile(req.file.buffer);
-        photoUrl = result?.url || null;
-      } catch (uploadErr) {
-        console.warn("Image upload warning:", uploadErr?.message || uploadErr);
-      }
+    let photoUrl;
+    try {
+      const result = await uploadFile(req.file.buffer);
+      photoUrl = result?.url;
+    } catch (uploadErr) {
+      logError("registration_image_upload", uploadErr, {
+        email: normalizedEmail,
+      });
+      return sendError(
+        res,
+        502,
+        "Profile photo upload failed. Please try again.",
+        "IMAGE_UPLOAD_FAILED",
+      );
+    }
+    if (!photoUrl) {
+      logError(
+        "registration_image_upload",
+        new Error("Image upload returned no URL"),
+        { email: normalizedEmail },
+      );
+      return sendError(
+        res,
+        502,
+        "Profile photo upload failed. Please try again.",
+        "IMAGE_UPLOAD_FAILED",
+      );
     }
 
+    const hashedPassword = await bcrypt.hash(password, 10);
     let validProjectStatus = undefined;
     if (
       hasProject === "yes" &&
@@ -223,6 +247,12 @@ async function createUser(req, res) {
         ? commitment
         : "exploring",
       photo: photoUrl,
+    });
+
+    logInfo("registration_created", {
+      userId: String(user._id),
+      email: user.email,
+      hasPhoto: Boolean(user.photo),
     });
 
     const accessToken = issueSession(user);

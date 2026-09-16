@@ -23,7 +23,7 @@ import callRouter from "./routes/call.routes.js";
 import { createRateLimiter } from "./middleware/rate-limit.middleware.js";
 import { isAllowedOrigin } from "./config/cors.config.js";
 import { sendError } from "./utils/http.js";
-import { logError } from "./utils/logger.js";
+import { createLogStream, logError } from "./utils/logger.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -36,7 +36,11 @@ app.use(
     contentSecurityPolicy: false,
   }),
 );
-app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
+app.use(
+  morgan(process.env.NODE_ENV === "production" ? "combined" : "dev", {
+    stream: createLogStream(),
+  }),
+);
 app.use(
   cors({
     origin: (origin, callback) => {
