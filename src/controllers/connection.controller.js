@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 import { sendError } from "../utils/http.js";
 import { logError } from "../utils/logger.js";
 import { sendPushToUser } from "../utils/push.js";
-import { sendConnectionRequestEmail } from "../utils/email.js";
+import { sendConnectionRequestEmail } from "../utils/mailer.js";
 function pairQuery(userA, userB) {
   return {
     $or: [
