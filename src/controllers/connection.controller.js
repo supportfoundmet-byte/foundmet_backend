@@ -45,7 +45,7 @@ async function assertActiveUser(userId) {
     isDeleted: { $ne: true },
     hiddenFromFeed: { $ne: true },
     accountStatus: { $nin: ["banned", "suspended"] },
-  }).select("name");
+  }).select("name email");
 }
 
 export async function sendConnectionRequest(req, res) {
@@ -114,6 +114,21 @@ export async function sendConnectionRequest(req, res) {
           ? req.body.message.trim().slice(0, 500)
           : "";
       await existing.save();
+
+      try {
+        await sendConnectionRequestEmail({
+          email: targetUser.email,
+          recipientName: targetUser.name,
+          senderName: req.user.name || "A founder",
+          message: existing.message,
+        });
+      } catch (emailError) {
+        logError("connection_request_email", emailError, {
+          recipientId: String(toUserId),
+          senderId: String(fromUserId),
+        });
+      }
+
       return res.status(201).json({
         success: true,
         message: `Connection request sent to ${targetUser.name}!`,
@@ -131,6 +146,20 @@ export async function sendConnectionRequest(req, res) {
           ? req.body.message.trim().slice(0, 500)
           : "",
     });
+
+    try {
+      await sendConnectionRequestEmail({
+        email: targetUser.email,
+        recipientName: targetUser.name,
+        senderName: req.user.name || "A founder",
+        message: connection.message,
+      });
+    } catch (emailError) {
+      logError("connection_request_email", emailError, {
+        recipientId: String(toUserId),
+        senderId: String(fromUserId),
+      });
+    }
 
     // ── Real-time notification to recipient ───────────────────────────
     const io = req.app.get("io");
