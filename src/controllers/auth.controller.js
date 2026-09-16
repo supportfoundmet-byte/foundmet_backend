@@ -100,7 +100,7 @@ function toPublicFounder(user, viewerLat, viewerLng) {
   };
 }
 
-async function createUser(req, res) {
+export async function createUser(req, res) {
   try {
     const {
       email,
@@ -121,6 +121,7 @@ async function createUser(req, res) {
       commitment,
     } = req.body;
 
+    // Validate request data
     const validation = validateCreateUserInput({
       email,
       name,
@@ -135,6 +136,7 @@ async function createUser(req, res) {
         email: validation.normalizedEmail,
         issues: validation.issues,
       });
+
       return sendError(
         res,
         400,
@@ -146,9 +148,26 @@ async function createUser(req, res) {
     const normalizedEmail = validation.normalizedEmail;
     const normalizedName = validation.normalizedName;
 
-    const isUserExists = await UserModel.exists({ email: normalizedEmail });
+    // Extra image validation
+    if (!req.file?.buffer) {
+      return sendError(
+        res,
+        400,
+        "Profile photo is required.",
+        "IMAGE_REQUIRED",
+      );
+    }
+
+    // Check duplicate email
+    const isUserExists = await UserModel.exists({
+      email: normalizedEmail,
+    });
+
     if (isUserExists) {
-      logInfo("registration_duplicate_email", { email: normalizedEmail });
+      logInfo("registration_duplicate_email", {
+        email: normalizedEmail,
+      });
+
       return sendError(
         res,
         409,
@@ -157,7 +176,9 @@ async function createUser(req, res) {
       );
     }
 
+    // Upload profile photo
     let photoUrl;
+
     try {
       const result = await uploadFile(req.file.buffer);
       photoUrl = result?.url;
@@ -165,19 +186,7 @@ async function createUser(req, res) {
       logError("registration_image_upload", uploadErr, {
         email: normalizedEmail,
       });
-      return sendError(
-        res,
-        502,
-        "Profile photo upload failed. Please try again.",
-        "IMAGE_UPLOAD_FAILED",
-      );
-    }
-    if (!photoUrl) {
-      logError(
-        "registration_image_upload",
-        new Error("Image upload returned no URL"),
-        { email: normalizedEmail },
-      );
+
       return sendError(
         res,
         502,
@@ -186,8 +195,29 @@ async function createUser(req, res) {
       );
     }
 
+    if (!photoUrl) {
+      logError(
+        "registration_image_upload",
+        new Error("Image upload returned no URL"),
+        {
+          email: normalizedEmail,
+        },
+      );
+
+      return sendError(
+        res,
+        502,
+        "Profile photo upload failed. Please try again.",
+        "IMAGE_UPLOAD_FAILED",
+      );
+    }
+
+    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
-    let validProjectStatus = undefined;
+
+    // Validate project status
+    let validProjectStatus;
+
     if (
       hasProject === "yes" &&
       ["idea", "development", "execution"].includes(projectStatus)
@@ -195,7 +225,9 @@ async function createUser(req, res) {
       validProjectStatus = projectStatus;
     }
 
+    // Format lookingFor
     let formattedLookingFor = [];
+
     if (Array.isArray(lookingFor)) {
       formattedLookingFor = lookingFor.filter((item) =>
         ["cto", "ceo", "cfo"].includes(item),
@@ -206,6 +238,8 @@ async function createUser(req, res) {
     ) {
       formattedLookingFor = [lookingFor];
     }
+
+    // Format canBring
     const allowedStrengths = [
       "technology",
       "business",
@@ -214,38 +248,72 @@ async function createUser(req, res) {
       "product",
       "other",
     ];
+
     const formattedCanBring = (
       Array.isArray(canBring) ? canBring : [canBring]
     ).filter((item) => allowedStrengths.includes(item));
 
+    // Calculate location safely
+    const userLocation = coordinatesFromAddress(address, {
+      latitude,
+      longitude,
+    });
+
+    // Create user
     const user = await UserModel.create({
       email: normalizedEmail,
       name: normalizedName,
       password: hashedPassword,
-      role: ["founder", "co-founder"].includes(role) ? role : "founder",
+
+      role: ["founder", "co-founder"].includes(role)
+        ? role
+        : "founder",
+
       hasProject: hasProject === "yes" ? "yes" : "no",
+
       projectDetails:
-        hasProject === "yes" && projectDetails
+        hasProject === "yes" && typeof projectDetails === "string"
           ? projectDetails.trim()
           : undefined,
+
       projectLink:
-        hasProject === "yes" && projectLink ? projectLink.trim() : undefined,
+        hasProject === "yes" && typeof projectLink === "string"
+          ? projectLink.trim()
+          : undefined,
+
       projectStatus: validProjectStatus,
       lookingFor: formattedLookingFor,
-      address: address ? address.trim() : undefined,
-      location: coordinatesFromAddress(address, { latitude, longitude }),
+
+      address:
+        typeof address === "string" && address.trim()
+          ? address.trim()
+          : undefined,
+
+      location: userLocation,
+
       matchRole: ["co-founder", "builder"].includes(matchRole)
         ? matchRole
         : "co-founder",
+
       canBring: formattedCanBring,
-      buildType: ["startup", "product", "business", "not-sure"].includes(
-        buildType,
-      )
+
+      buildType: [
+        "startup",
+        "product",
+        "business",
+        "not-sure",
+      ].includes(buildType)
         ? buildType
         : "not-sure",
-      commitment: ["full-time", "part-time", "exploring"].includes(commitment)
+
+      commitment: [
+        "full-time",
+        "part-time",
+        "exploring",
+      ].includes(commitment)
         ? commitment
         : "exploring",
+
       photo: photoUrl,
     });
 
@@ -255,24 +323,47 @@ async function createUser(req, res) {
       hasPhoto: Boolean(user.photo),
     });
 
+    // Create login session
     const accessToken = issueSession(user);
-    res.cookie("accessToken", accessToken, authCookieOptions);
 
-    try {
-      await sendWelcomeEmail({ email: user.email, name: user.name });
-    } catch (emailError) {
-      logError("welcome_email", emailError, { email: user.email });
-    }
+    res.cookie(
+      "accessToken",
+      accessToken,
+      authCookieOptions,
+    );
 
+    /*
+     * Send welcome email in the background.
+     * Do not await it because Gmail SMTP may timeout.
+     */
+    sendWelcomeEmail({
+      email: user.email,
+      name: user.name,
+    }).catch((emailError) => {
+      logError("welcome_email", emailError, {
+        email: user.email,
+      });
+    });
+
+    // Prepare safe user response once
+    const safeUser = sessionUser(user);
+
+    // Return immediately
     return res.status(201).json({
       success: true,
       message: "User account created successfully",
-      data: { user: sessionUser(user), accessToken },
-      user: sessionUser(user),
+
+      data: {
+        user: safeUser,
+        accessToken,
+      },
+
+      user: safeUser,
       accessToken,
     });
   } catch (error) {
     logError("create_user", error);
+
     if (error?.code === 11000) {
       return sendError(
         res,
@@ -281,6 +372,7 @@ async function createUser(req, res) {
         "DUPLICATE_ACCOUNT",
       );
     }
+
     if (
       error?.name === "MongooseServerSelectionError" ||
       error?.name === "MongoNetworkError"
@@ -292,6 +384,7 @@ async function createUser(req, res) {
         "SERVICE_UNAVAILABLE",
       );
     }
+
     return sendError(
       res,
       500,
@@ -300,7 +393,6 @@ async function createUser(req, res) {
     );
   }
 }
-
 async function allUsers(req, res) {
   try {
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);

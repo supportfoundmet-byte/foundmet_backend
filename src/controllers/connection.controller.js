@@ -53,6 +53,7 @@ export async function sendConnectionRequest(req, res) {
     const fromUserId = req.user._id;
     const toUserId = req.params.userId;
 
+    // Validate target user ID
     if (!mongoose.isValidObjectId(toUserId)) {
       return sendError(
         res,
@@ -61,19 +62,29 @@ export async function sendConnectionRequest(req, res) {
         "VALIDATION_ERROR",
       );
     }
-    if (fromUserId.toString() === toUserId.toString()) {
+
+    // Prevent self-request
+    if (String(fromUserId) === String(toUserId)) {
       return sendError(
         res,
         400,
-        "You cannot send a connection request to yourself",
+        "You cannot send a connection request to yourself.",
         "SELF_REQUEST",
       );
     }
 
+    // Find active target user
     const targetUser = await assertActiveUser(toUserId);
+
     if (!targetUser) {
-      return sendError(res, 404, "Founder not found", "NOT_FOUND");
+      return sendError(
+        res,
+        404,
+        "Founder not found.",
+        "NOT_FOUND",
+      );
     }
+
     if (!targetUser.email) {
       return sendError(
         res,
@@ -83,10 +94,38 @@ export async function sendConnectionRequest(req, res) {
       );
     }
 
+    // Safely read request message
+    const connectionMessage =
+      typeof req.body?.message === "string"
+        ? req.body.message.trim().slice(0, 500)
+        : "";
+
+    // Find an existing connection in either direction
     const existing = await ConnectionModel.findOne(
       pairQuery(fromUserId, toUserId),
     );
+
+    /*
+     * Helper for sending email in the background.
+     * Registration/connection API will not wait for Gmail.
+     */
+    const sendRequestEmailInBackground = (message) => {
+      sendConnectionRequestEmail({
+        email: targetUser.email,
+        recipientName: targetUser.name,
+        senderName: req.user.name || "A founder",
+        message,
+      }).catch((emailError) => {
+        logError("connection_request_email", emailError, {
+          recipientId: String(toUserId),
+          senderId: String(fromUserId),
+        });
+      });
+    };
+
+    // Existing connection found
     if (existing) {
+      // Blocked connection
       if (existing.status === "blocked") {
         return sendError(
           res,
@@ -95,47 +134,50 @@ export async function sendConnectionRequest(req, res) {
           "BLOCKED",
         );
       }
+
+      // Already connected
       if (existing.status === "accepted") {
         return res.status(200).json({
           success: true,
           message: "You are already connected with this founder.",
-          connection: { _id: existing._id, status: existing.status },
+          connection: {
+            _id: existing._id,
+            status: existing.status,
+          },
           state: "CONNECTED",
         });
       }
+
+      // Request already pending
       if (existing.status === "pending") {
-        const incoming = String(existing.toUser) === String(fromUserId);
+        const incoming =
+          String(existing.toUser) === String(fromUserId);
+
         return res.status(200).json({
           success: true,
           message: incoming
             ? "This founder already sent you a request. Open Dashboard to accept it."
-            : "Connection request already sent",
-          connection: { _id: existing._id, status: existing.status },
-          state: incoming ? "PENDING_RECEIVED" : "PENDING_SENT",
+            : "Connection request already sent.",
+          connection: {
+            _id: existing._id,
+            status: existing.status,
+          },
+          state: incoming
+            ? "PENDING_RECEIVED"
+            : "PENDING_SENT",
         });
       }
+
+      // Reopen rejected/other connection
       existing.fromUser = fromUserId;
       existing.toUser = toUserId;
       existing.status = "pending";
-      existing.message =
-        typeof req.body?.message === "string"
-          ? req.body.message.trim().slice(0, 500)
-          : "";
+      existing.message = connectionMessage;
+
       await existing.save();
 
-      try {
-        await sendConnectionRequestEmail({
-          email: targetUser.email,
-          recipientName: targetUser.name,
-          senderName: req.user.name || "A founder",
-          message: existing.message,
-        });
-      } catch (emailError) {
-        logError("connection_request_email", emailError, {
-          recipientId: String(toUserId),
-          senderId: String(fromUserId),
-        });
-      }
+      // Send email without blocking response
+      sendRequestEmailInBackground(existing.message);
 
       return res.status(201).json({
         success: true,
@@ -145,11 +187,7 @@ export async function sendConnectionRequest(req, res) {
       });
     }
 
-    const connectionMessage =
-      typeof req.body?.message === "string"
-        ? req.body.message.trim().slice(0, 500)
-        : "";
-
+    // Create a new connection
     const connection = await ConnectionModel.create({
       fromUser: fromUserId,
       toUser: toUserId,
@@ -157,24 +195,15 @@ export async function sendConnectionRequest(req, res) {
       message: connectionMessage,
     });
 
-    try {
-      await sendConnectionRequestEmail({
-        email: targetUser.email,
-        recipientName: targetUser.name,
-        senderName: req.user.name || "A founder",
-        message: connection.message,
-      });
-    } catch (emailError) {
-      logError("connection_request_email", emailError, {
-        recipientId: String(toUserId),
-        senderId: String(fromUserId),
-      });
-    }
+    // Send email without blocking response
+    sendRequestEmailInBackground(connection.message);
 
-    // ── Real-time notification to recipient ───────────────────────────
+    // Real-time notification
     const io = req.app.get("io");
+
     const senderName = req.user.name || "A founder";
     const senderPhoto = req.user.photo || "";
+
     const notifPayload = {
       type: "connection_request",
       connectionId: String(connection._id),
@@ -183,24 +212,31 @@ export async function sendConnectionRequest(req, res) {
       fromUserPhoto: senderPhoto,
       message: connection.message,
       timestamp:
-        connection.createdAt?.toISOString() || new Date().toISOString(),
+        connection.createdAt?.toISOString() ||
+        new Date().toISOString(),
     };
 
-    // Socket event (in-app)
+    // Socket.IO notification
     io?.to(`user:${toUserId}`).emit(
       "connection_request_received",
       notifPayload,
     );
 
-    // Browser push (if offline)
+    // Browser push notification
     sendPushToUser(toUserId, {
       title: "New Connection Request",
       body: `${senderName} wants to connect with you.`,
       icon: senderPhoto || undefined,
       url: "/dashboard/connections",
       tag: `conn-${fromUserId}`,
-    }).catch((err) => logError("push_connection_request", err));
+    }).catch((pushError) => {
+      logError("push_connection_request", pushError, {
+        recipientId: String(toUserId),
+        senderId: String(fromUserId),
+      });
+    });
 
+    // Return immediately
     return res.status(201).json({
       success: true,
       message: `Connection request sent to ${targetUser.name}!`,
@@ -209,6 +245,8 @@ export async function sendConnectionRequest(req, res) {
     });
   } catch (error) {
     logError("send_connection", error);
+
+    // Duplicate key error
     if (error?.code === 11000) {
       return sendError(
         res,
@@ -217,6 +255,7 @@ export async function sendConnectionRequest(req, res) {
         "CONFLICT",
       );
     }
+
     return sendError(
       res,
       500,
