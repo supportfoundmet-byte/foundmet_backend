@@ -741,4 +741,4 @@ async function updateMe(req, res) {
   });
 }
 
-export { createUser, allUsers, loginUser, logoutUser, getMe, updateMe };
+export {  allUsers, loginUser, logoutUser, getMe, updateMe };
