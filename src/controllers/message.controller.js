@@ -304,3 +304,86 @@ export async function sendMessage(req, res) {
     );
   }
 }
+
+export async function deleteMessage(req, res) {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user._id;
+
+    if (!mongoose.isValidObjectId(messageId)) {
+      return sendError(res, 400, "Invalid message ID.", "VALIDATION_ERROR");
+    }
+
+    const message = await MessageModel.findById(messageId);
+    if (!message) {
+      return sendError(res, 404, "Message not found.", "NOT_FOUND");
+    }
+
+    if (String(message.sender) !== String(userId)) {
+      return sendError(
+        res,
+        403,
+        "You can only erase your own messages.",
+        "FORBIDDEN"
+      );
+    }
+
+    const roomId = message.roomId;
+    await MessageModel.findByIdAndDelete(messageId);
+
+    const io = req.app.get("io");
+    io?.to(roomId).emit("message_deleted", {
+      messageId: String(messageId),
+      roomId,
+      deletedBy: String(userId),
+    });
+
+    return res.json({
+      success: true,
+      message: "Message erased successfully.",
+      messageId: String(messageId),
+    });
+  } catch (error) {
+    console.error("DELETE MESSAGE ERROR:", error);
+    return sendError(res, 500, "Unable to erase message.", "MESSAGE_DELETE_ERROR");
+  }
+}
+
+export async function clearConversation(req, res) {
+  try {
+    const userId = req.user._id;
+    const otherUserId = req.params.otherUserId;
+
+    if (!mongoose.isValidObjectId(otherUserId)) {
+      return sendError(res, 400, "Invalid user ID.", "VALIDATION_ERROR");
+    }
+
+    const roomId = roomFor(userId, otherUserId);
+    const deleteResult = await MessageModel.deleteMany({ roomId });
+
+    const io = req.app.get("io");
+    io?.to(roomId)
+      ?.to(`user:${userId}`)
+      ?.to(`user:${otherUserId}`)
+      ?.emit("conversation_cleared", {
+        roomId,
+        clearedBy: String(userId),
+        deletedCount: deleteResult.deletedCount,
+      });
+
+    return res.json({
+      success: true,
+      message: "Conversation history cleared successfully.",
+      deletedCount: deleteResult.deletedCount,
+      roomId,
+    });
+  } catch (error) {
+    console.error("CLEAR CONVERSATION ERROR:", error);
+    return sendError(
+      res,
+      500,
+      "Unable to clear conversation history.",
+      "CONVERSATION_CLEAR_ERROR"
+    );
+  }
+}

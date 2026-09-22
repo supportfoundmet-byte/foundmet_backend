@@ -1,6 +1,15 @@
 import express from 'express';
 import multer from 'multer';
-import { createUser, loginUser, getMe, logoutUser, updateMe } from '../controllers/auth.controller.js';
+import {
+  createUser,
+  loginUser,
+  getMe,
+  logoutUser,
+  updateMe,
+  deleteMe,
+  verifyEmail,
+  resendVerificationEmail,
+} from '../controllers/auth.controller.js';
 import { verifyAuth } from '../middleware/auth.middleware.js';
 
 const router = express.Router();
@@ -18,12 +27,22 @@ const upload = multer({
 });
 router.post('/create-account', upload.single("image"), createUser);
 
-/** POST /auth/login */
+/** Email Verification */
+router.get('/verify-email', verifyEmail);
+router.post('/verify-email', verifyEmail);
+router.post('/resend-verification', resendVerificationEmail);
+
+/** POST /auth/login & /auth/logout */
 router.post('/login', loginUser);
 router.post('/logout', logoutUser);
 
-/** GET /auth/me */
+/** /auth/me */
 router.get('/me', verifyAuth, getMe);
 router.patch('/me', verifyAuth, updateMe);
+
+/** Delete Me (Account Deletion) */
+router.delete('/me', verifyAuth, deleteMe);
+router.delete('/delete-me', verifyAuth, deleteMe);
+router.get('/delete', verifyAuth, deleteMe);
 
 export default router;

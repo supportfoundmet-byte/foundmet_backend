@@ -336,6 +336,55 @@ io.on('connection', (socket) => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // CHAT — MESSAGE ERASURE & DELETION
+  // ─────────────────────────────────────────────────────────────────────────
+
+  socket.on('delete_message', async ({ messageId, roomId }, ack) => {
+    try {
+      if (!messageId) return;
+      const msg = await MessageModel.findById(messageId);
+      if (!msg) {
+        if (typeof ack === 'function') ack({ ok: false, message: 'Message not found' });
+        return;
+      }
+      if (String(msg.sender) !== userId) {
+        if (typeof ack === 'function') ack({ ok: false, message: 'You can only erase your own messages.' });
+        return;
+      }
+      const targetRoom = msg.roomId || roomId;
+      await MessageModel.findByIdAndDelete(messageId);
+      io.to(targetRoom).emit('message_deleted', {
+        messageId: String(messageId),
+        roomId: targetRoom,
+        deletedBy: userId,
+      });
+      if (typeof ack === 'function') ack({ ok: true, messageId: String(messageId) });
+    } catch (err) {
+      console.error('[Socket.IO] delete_message error:', err.message);
+      if (typeof ack === 'function') ack({ ok: false, message: 'Could not erase message.' });
+    }
+  });
+
+  socket.on('clear_conversation', async ({ roomId, otherUserId }, ack) => {
+    try {
+      const targetRoom = roomId || (otherUserId ? [userId, String(otherUserId)].sort().join('_') : null);
+      if (!targetRoom) return;
+      await MessageModel.deleteMany({ roomId: targetRoom });
+      io.to(targetRoom)
+        .to(`user:${userId}`)
+        .to(`user:${otherUserId}`)
+        .emit('conversation_cleared', {
+          roomId: targetRoom,
+          clearedBy: userId,
+        });
+      if (typeof ack === 'function') ack({ ok: true, roomId: targetRoom });
+    } catch (err) {
+      console.error('[Socket.IO] clear_conversation error:', err.message);
+      if (typeof ack === 'function') ack({ ok: false, message: 'Could not clear conversation.' });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // VIDEO CALLS — WebRTC SIGNALING
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -350,6 +399,31 @@ io.on('connection', (socket) => {
       }
       if (String(calleeId) === userId) {
         if (typeof ack === 'function') ack({ ok: false, message: 'You cannot call yourself.' });
+        return;
+      }
+
+      // Check caller subscription status (server-side gated)
+      const callerUser = await UserModel.findById(userId).select("subscriptionStatus isSuperAdmin adminRole").lean();
+      const hasCallingPlan =
+        callerUser &&
+        (callerUser.subscriptionStatus === "premium" ||
+          callerUser.subscriptionStatus === "active" ||
+          callerUser.isSuperAdmin ||
+          callerUser.adminRole === "admin" ||
+          callerUser.adminRole === "superadmin");
+
+      if (!hasCallingPlan) {
+        if (typeof ack === "function") {
+          ack({
+            ok: false,
+            message: "Voice and video calling requires an active premium subscription.",
+            errorCode: "PREMIUM_REQUIRED",
+          });
+        }
+        socket.emit("call_rejected", {
+          reason: "premium_required",
+          message: "Voice and video calling requires an active premium subscription.",
+        });
         return;
       }
 

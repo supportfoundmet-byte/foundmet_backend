@@ -116,9 +116,18 @@ const userSchema = new mongoose.Schema(
     isSuspicious: { type: Boolean, default: false, index: true },
     isSpam: { type: Boolean, default: false, index: true },
     reportCount: { type: Number, default: 0, min: 0 },
-    adminRole: { type: String, enum: ["none", "admin", "superadmin"], default: "none", index: true },
+    adminRole: {
+      type: String,
+      enum: ["none", "admin", "superadmin"],
+      default: "none",
+      index: true,
+    },
     blockedAt: { type: Date, default: null },
-    blockedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    blockedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     warnings: [
       {
         message: { type: String, maxlength: 500 },
@@ -128,6 +137,19 @@ const userSchema = new mongoose.Schema(
     lastLogin: { type: Date, default: null },
     lastSeen: { type: Date, default: null },
     isSuperAdmin: { type: Boolean, default: false, select: false },
+    isVerified: { type: Boolean, default: false, index: true },
+    verificationToken: { type: String, default: null, index: true },
+    verificationTokenExpires: { type: Date, default: null },
+    subscriptionStatus: {
+      type: String,
+      enum: ["free", "premium", "active"],
+      default: "free",
+      index: true,
+    },
+    subscriptionPlan: {
+      type: String,
+      default: "free",
+    },
     congratulations: [
       {
         message: { type: String, maxlength: 500 },
@@ -153,7 +175,13 @@ const userSchema = new mongoose.Schema(
   },
 );
 
-userSchema.index({ discoverableNearby: 1, hiddenFromFeed: 1, isDeleted: 1, isBlocked: 1, createdAt: -1 });
+userSchema.index({
+  discoverableNearby: 1,
+  hiddenFromFeed: 1,
+  isDeleted: 1,
+  isBlocked: 1,
+  createdAt: -1,
+});
 userSchema.index({ "location.city": 1, createdAt: -1 });
 userSchema.index({ "location.state": 1, createdAt: -1 });
 userSchema.index({ name: 1 });

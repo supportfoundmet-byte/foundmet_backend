@@ -70,7 +70,7 @@ export const verifyAuth = (req, res, next) => {
     }
 
     UserModel.findById(decoded._id)
-      .select("isBlocked isDeleted accountStatus name email role photo")
+      .select("isBlocked isDeleted accountStatus name email role photo isVerified")
       .lean()
       .then((user) => {
         if (!user || user.isDeleted) {
@@ -102,6 +102,7 @@ export const verifyAuth = (req, res, next) => {
           name: user.name,
           email: user.email,
           photo: user.photo,
+          isVerified: Boolean(user.isVerified),
         };
         next();
       })
@@ -121,5 +122,58 @@ export const verifyAuth = (req, res, next) => {
       "Invalid or expired session. Please log in again.",
       "INVALID_SESSION",
     );
+  }
+};
+
+export const optionalAuth = (req, res, next) => {
+  try {
+    if (!process.env.ACCESS_TOKEN_SECRET) {
+      req.user = null;
+      return next();
+    }
+
+    const token = getAuthToken(req);
+    if (!token) {
+      req.user = null;
+      return next();
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+    } catch {
+      req.user = null;
+      return next();
+    }
+
+    if (!decoded?._id) {
+      req.user = null;
+      return next();
+    }
+
+    UserModel.findById(decoded._id)
+      .select("isBlocked isDeleted accountStatus name email role photo isVerified")
+      .lean()
+      .then((user) => {
+        if (!user || user.isDeleted || user.isBlocked || user.accountStatus === "banned" || user.accountStatus === "suspended") {
+          req.user = null;
+        } else {
+          req.user = {
+            ...decoded,
+            name: user.name,
+            email: user.email,
+            photo: user.photo,
+            isVerified: Boolean(user.isVerified),
+          };
+        }
+        next();
+      })
+      .catch(() => {
+        req.user = null;
+        next();
+      });
+  } catch {
+    req.user = null;
+    next();
   }
 };

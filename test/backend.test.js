@@ -140,3 +140,15 @@ test("creates typed HTTP errors", () => {
   assert.equal(error.errorCode, "DUPLICATE");
   assert.equal(error.message, "Already exists");
 });
+
+test("UserModel schema defaults isVerified to false", async () => {
+  const UserModel = (await import("../src/models/user.model.js")).default;
+  const user = new UserModel({
+    email: "test@example.com",
+    name: "Test Founder",
+    password: "hashedPassword123",
+  });
+  assert.equal(user.isVerified, false);
+  assert.equal(user.verificationToken, null);
+});
+
