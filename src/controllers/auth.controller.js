@@ -346,7 +346,7 @@ export async function createUser(req, res) {
     const appUrl = getAppUrl(req);
     const verificationUrl = `${appUrl}/verify-email?token=${verificationToken}`;
 
-    sendVerificationEmail({
+    await sendVerificationEmail({
       email: user.email,
       name: user.name,
       verificationUrl,
